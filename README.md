@@ -34,9 +34,16 @@ Pose butcher segments a ligand into categories:
 
 ```
 from posebutcher import Butcher
-protein = Path / mp.System
-pose = rdkit.Mol / mp.AtomGroup / ase.Atoms
-pockets = {'P1':'r101,r122,...'} / or mp.Primitives?
-butcher = Butcher(protein, pockets)
-result : dict = butcher(pose, draw = ['2d,3d,debug'])
+
+protein = 'test_data/template.pdb'
+hits = 'test_data/filtered.sdf'
+pockets = {}
+
+butcher = Butcher(protein, hits, pockets)
+
+mol_df = PandasTools.LoadSDF('test_data/BBS_AMU_products_fragalysis.sdf')
+
+pose = mol_df['ROMol'].values[2]
+
+result = butcher.chop(pose)
 ```
