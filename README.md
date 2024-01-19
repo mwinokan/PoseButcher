@@ -14,10 +14,29 @@ Pose butcher segments a ligand into categories:
 
 ## Usage
 
-1. Create the butcher:
+1. Install:
+
+`$ pip install git+https://github.com/mwinokan/PoseButcher.git#egg=posebutcher`
+
+2. Import:
+
+`from posebutcher import Butcher`
+
+2. Create the butcher:
 
 `butcher = Butcher(protein, hits, pockets)`
 
-2. Chop up a ligand pose:
+3. Chop up a ligand pose:
 
 `result = butcher.chop(pose)`
+
+## Examples
+
+```
+from posebutcher import Butcher
+protein = Path / mp.System
+pose = rdkit.Mol / mp.AtomGroup / ase.Atoms
+pockets = {'P1':'r101,r122,...'} / or mp.Primitives?
+butcher = Butcher(protein, pockets)
+result : dict = butcher(pose, draw = ['2d,3d,debug'])
+```
