@@ -1,10 +1,12 @@
 
 from rdkit import Chem
-from rdkit.Chem import PandasTools
+from rdkit.Chem import PandasTools, AllChem, rdDepictor
 import molparse as mp
 from pathlib import Path
 import mgo
 import plotly.graph_objects as go
+import copy
+import mout
 
 class PoseButcher:
 
@@ -57,6 +59,10 @@ class PoseButcher:
 		self._protein = None
 		self._hit_df = None
 		self._hit_atomgroup = None
+		self._hit_mesh = None
+		
+		self._protein_mesh = None
+		self._protein_hull = None
 
 		self._parse_protein(protein)
 		self._parse_hits(hits)
@@ -86,6 +92,7 @@ class PoseButcher:
 				- '2d' rdkit 2d drawing
 				- '3d' rdkit 3d render
 				- 'debug' plotly 3d graph showing the various hulls 
+				- 'render' open3d render
 
 		Returns labelled atom indices: e.g.
 
@@ -103,7 +110,7 @@ class PoseButcher:
 		# parse arguments
 
 		if draw:
-			assert draw in ['2d', '3d', 'debug']
+			assert draw in ['2d', '3d', 'debug', 'render']
 
 		if protein:
 			protein = self._parse_protein(protein)
@@ -126,8 +133,7 @@ class PoseButcher:
 
 		# render the result
 
-		if draw:
-			assert draw == 'debug'
+		if draw == 'debug':
 
 			fig = go.Figure()
 
@@ -137,7 +143,20 @@ class PoseButcher:
 
 			fig.show()
 
-			# group = 
+		elif draw == '2d':
+
+			mout.header(pose.name)
+
+			mol = mp.rdkit.mol_from_pdb_block(pose.pdb_block)
+			rdDepictor.Compute2DCoords(mol)
+
+			drawing = mp.rdkit.draw_highlighted_mol(mol,output_to_color_pairs(output))
+			display(drawing)
+
+		elif draw == 'render':
+
+			from .o3d import render, mesh_from_AtomGroup
+			render([self.protein_mesh, mesh_from_AtomGroup(pose, use_covalent=True)])
 
 		return output
 
@@ -161,16 +180,48 @@ class PoseButcher:
 		return self._hit_atomgroup
 
 	@property
-	def hit_volume(self):
-		return self._hit_volume
+	def hit_mesh(self):
+		if self._hit_mesh is None:
+			from .o3d import mesh_from_AtomGroup, paint
+			self._hit_mesh = mesh_from_AtomGroup(self.hit_atomgroup)
+			# paint(self._hit_mesh, [1, 0.706, 0])
+		return self._hit_mesh
 
+	@property
+	def protein_mesh(self):
+		if self._protein_mesh is None:
+			from .o3d import mesh_from_AtomGroup, paint
+			self._protein_mesh = mesh_from_AtomGroup(self.protein)
+			paint(self._protein_mesh, [0.098, 0.463, 0.824])
+		return self._protein_mesh
+
+	@property
+	def protein_hull(self):
+		if self._protein_hull is None:
+			from .o3d import convex_hull
+			mesh = copy.deepcopy(self.protein_mesh['geometry'])
+			self._protein_hull = convex_hull(mesh)
+
+		return self._protein_hull
 	
 	### INTERNAL METHODS
 
 	def _parse_protein(self, protein):
 		
 		if isinstance(protein,str) or isinstance(protein, Path):
-			self._protein = mp.parse(protein)
+			self._protein = mp.parse(protein).protein_system
+
+		else:
+			raise NotImplementedError
+
+	def _parse_hits(self, hits):
+		
+		if isinstance(hits,str) and hits.endswith('.sdf'):
+			self._hit_df = PandasTools.LoadSDF(hits)
+		
+		if isinstance(hits, Path) and hits.is_dir():
+			
+			raise NotImplementedError
 
 		else:
 			raise NotImplementedError
@@ -188,10 +239,20 @@ class PoseButcher:
 
 	def _classify_atom(self, atom):
 		
-		if self.hit_volume.is_inside(atom.position):
-			return 'GOOD: fragment space'
+		from .o3d import is_point_in_mesh
+
+		if is_point_in_mesh(self.hit_mesh, atom.position):
+			return ('GOOD','fragment space')
+
+		# elif is_point_in_mesh(self.protein_mesh, atom.position, within=atom.covalent_radius):
+		elif is_point_in_mesh(self.protein_mesh, atom.position, within=atom.vdw_radius):
+			return ('BAD','protein clash')
+
+		# elif is_point_in_mesh(self.protein_hull, atom.position):
+		# 	return ('GOOD','pocket?')
+
 		else:
-			return 'BAD: solvent space'
+			return ('BAD','solvent space')
 
 	def _build_fragment_bolus(self):
 
@@ -205,18 +266,6 @@ class PoseButcher:
 
 		self._hit_atomgroup = mp.AtomGroup.from_any('Fragment Bolus', atoms)
 
-		self._hit_volume = mp.monte.CompoundVolume()
-
-		for atom in self.hit_atomgroup.atoms:
-
-			vol = mp.monte.Sphere(atom.position, atom.vdw_radius)
-
-			self.hit_volume.add_volume(vol)
-
-		self.hit_volume.simplify()
-
-		pass
-
 	def _plot_fragment_bolus(self, fig=None):
 
 		if not fig:
@@ -227,3 +276,29 @@ class PoseButcher:
 			fig.add_trace(mgo.sphere_trace(vol.centre, vol.radius))
 
 		return fig
+
+	def _render_meshes(self, wireframe=False):
+		from .o3d import render
+		render([self.hit_mesh, self.protein_mesh], wireframe=wireframe)
+		# render([self.hit_mesh], wireframe=wireframe)
+
+def output_to_color_pairs(output):
+
+	lookup = {
+		'fragment space': None,
+		'pocket?': (0,1,0),
+		'protein clash': (1,0,0),
+		'solvent space': (0,0,1),
+	}
+
+	pairs = []
+	for k,v in output.items():
+
+		c = lookup[v[1]]
+
+		if c is None:
+			continue
+
+		pairs.append((k,c))
+
+	return pairs
