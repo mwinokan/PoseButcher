@@ -152,12 +152,18 @@ class PoseButcher:
 
 		# render the result
 		if draw == '2d':
-			mout.header(pose.name)
-
 			mol = mp.rdkit.mol_from_pdb_block(pose.pdb_block)
 			rdDepictor.Compute2DCoords(mol)
 
-			drawing = mp.rdkit.draw_highlighted_mol(mol,output_to_color_pairs(output))
+			for atom in mol.GetAtoms():
+				atom.SetProp('atomNote',output_to_label(output, atom.GetIdx()))
+
+			drawing = mp.rdkit.draw_highlighted_mol(
+				mol,
+				output_to_color_pairs(output),
+				legend=pose.name,
+			)
+
 			display(drawing)
 
 		elif draw == '3d':
@@ -373,3 +379,12 @@ def output_to_color_pairs(output):
 		pairs.append((k,c))
 
 	return pairs
+
+def output_to_label(output, index):
+
+	output_tuple = output[index]
+
+	if output_tuple[1] == 'pocket':
+		return f'{output_tuple[2]}'
+
+	return ''
