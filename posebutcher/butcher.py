@@ -262,8 +262,6 @@ class PoseButcher:
 
 		from .o3d import sphere #, subtract_atoms
 
-		assert radius in ['mean', 'max', 'min'] or isinstance(radius, float)
-
 		# sphere centred between given atoms
 
 		com = sum([a.np_pos for a in atoms])/len(atoms)
@@ -306,7 +304,7 @@ class PoseButcher:
 		return res.get_atom(atom_name)
 
 	def _new_pocket(self, name, mesh):
-		self._pockets[name] = mesh
+		self._pockets[name] = {'name':name, 'geometry':mesh}
 
 	def _classify_atom(self, atom):
 		
