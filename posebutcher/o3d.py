@@ -222,6 +222,33 @@ def mesh_from_AtomGroup(group, r_scale=1.0, use_covalent=False):
 
 	return {'name':group.name, 'geometry':combined}
 
+def mesh_from_pdb(path):
+
+	import pygamer
+
+	mout.out('pygamer.readPDB_molsurf...')
+	mesh = pygamer.readPDB_molsurf(path)
+
+	mout.out('compute_orientation...')
+	components, orientable, manifold = mesh.compute_orientation()
+	mesh.correctNormals()
+	# print(F"The mesh has {components} components, is"
+	# F" {'orientable' if orientable else 'non-orientable'}, and is"
+	# F" {'manifold' if manifold else 'non-manifold'}.")
+
+	mout.out('creating tensors...')
+	protverts, protedges, protfaces = mesh.to_ndarray()
+	vertices = o3d.core.Tensor(protverts, dtype=o3d.core.Dtype.Float32)
+	triangles = o3d.core.Tensor(protfaces, dtype=o3d.core.Dtype.Int32)
+
+	mout.out('creating mesh...')
+	mesh = o3d.t.geometry.TriangleMesh()
+	mesh.vertex.positions = vertices
+	mesh.triangle.indices = triangles
+
+	# mesh.compute_vertex_normals()
+	return mesh
+
 ####
 
 def test_sphere():

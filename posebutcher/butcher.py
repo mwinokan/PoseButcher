@@ -194,19 +194,51 @@ class PoseButcher:
 	@property
 	def hit_mesh(self):
 		if self._hit_mesh is None:
-			mout.out('Generating fragment bolus mesh...')
-			from .o3d import mesh_from_AtomGroup, paint
-			self._hit_mesh = mesh_from_AtomGroup(self.hit_atomgroup)
+			
+			# create fragment bolus PDB
+			
+			sys = mp.System('FragmentBolus')
+			chain = mp.Chain('A')
+			res = mp.Residue('LIG', 1, 1)
+
+			for atom in self.hit_atomgroup.atoms:
+				atom.heterogen = False
+				res.add_atom(atom)
+
+			chain.add_residue(res)
+			sys.add_chain(chain)
+
+			self._fragment_bolus_path = 'fragment_bolus.pdb'
+			mp.writePDB(self._fragment_bolus_path, sys, shift_name=True)
+
+			# create the mesh from the PDB
+			from .o3d import mesh_from_pdb, paint
+			self._hit_mesh = dict(
+				name='fragments',
+				geometry=mesh_from_pdb(self._fragment_bolus_path).to_legacy()
+			)
+			
 			paint(self._hit_mesh, [1, 0.706, 0])
+
 		return self._hit_mesh
 
 	@property
 	def protein_mesh(self):
 		if self._protein_mesh is None:
 			mout.out('Generating protein mesh...')
-			from .o3d import mesh_from_AtomGroup, paint
-			self._protein_mesh = mesh_from_AtomGroup(self.protein)
+			# from .o3d import mesh_from_AtomGroup, paint
+			# self._protein_mesh = mesh_from_AtomGroup(self.protein)
+
+			from .o3d import mesh_from_pdb, paint
+			self._protein_mesh = dict(
+				name='protein',
+				geometry=mesh_from_pdb(self._apo_protein_path).to_legacy()
+			)
+
+			# self._protein_mesh = self._protein_mesh.to_legacy()
+			
 			paint(self._protein_mesh, [0.098, 0.463, 0.824])
+
 		return self._protein_mesh
 
 	@property
@@ -233,6 +265,8 @@ class PoseButcher:
 		
 		if isinstance(protein,str) or isinstance(protein, Path):
 			self._protein = mp.parse(protein).protein_system
+			self._apo_protein_path = f'apo_template.pdb'
+			mp.writePDB(self._apo_protein_path, self._protein, shift_name=True)
 
 		else:
 			raise NotImplementedError
