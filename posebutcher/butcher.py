@@ -68,8 +68,8 @@ class PoseButcher:
 			e.g. 
 
 			pockets = {
-			    "P1":  dict(type='sphere', atoms=['GLY 127 O', 'PRO 107 CG', 'VAL 124 CG1'], radius='mean'),
-			    "P1'": dict(type='sphere', atoms=['VAL 84 CG1', 'TYR 90 CD2', 'SER 87 CB'], radius='mean'),
+				"P1":  dict(type='sphere', atoms=['GLY 127 O', 'PRO 107 CG', 'VAL 124 CG1'], radius='mean'),
+				"P1'": dict(type='sphere', atoms=['VAL 84 CG1', 'TYR 90 CD2', 'SER 87 CB'], radius='mean'),
 			}
 
 		'''
@@ -194,7 +194,7 @@ class PoseButcher:
 	@property
 	def hit_mesh(self):
 		if self._hit_mesh is None:
-			
+
 			# create fragment bolus PDB
 			
 			sys = mp.System('FragmentBolus')
@@ -298,8 +298,9 @@ class PoseButcher:
 
 			self._spherical_pocket_from_atoms(name, atoms, radius)
 
-	def _spherical_pocket_from_atoms(self, name, atoms, radius='mean'):
+	def _spherical_pocket_from_atoms(self, name, atoms, radius='mean', subtract_protein=True):
 
+		import random
 		from .o3d import sphere #, subtract_atoms
 
 		# sphere centred between given atoms
@@ -321,7 +322,22 @@ class PoseButcher:
 
 		mesh = sphere(r, com)
 
-		self._new_pocket(name, mesh)
+		if subtract_protein:
+			mout.out('subtracting protein...')
+			from open3d.t.geometry import TriangleMesh
+			protein = TriangleMesh.from_legacy(self.protein_mesh['geometry'])
+			mesh = mesh.boolean_difference(protein)
+
+		from open3d.visualization.rendering import MaterialRecord
+		mat = MaterialRecord()
+		mat.base_color = [
+			random.random(),
+			random.random(),
+			random.random(), 1.0
+		]
+		mat.shader = "defaultLit"
+
+		self._new_pocket(name, mesh, mat)
 
 	def _get_protein_atom(self, query: str):
 
@@ -343,8 +359,10 @@ class PoseButcher:
 
 		return res.get_atom(atom_name)
 
-	def _new_pocket(self, name, mesh):
+	def _new_pocket(self, name, mesh, material=None):
 		self._pockets[name] = {'name':name, 'geometry':mesh}
+		if material:
+			self._pockets[name]['material'] = material
 
 	def _classify_atom(self, atom):
 		

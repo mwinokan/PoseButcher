@@ -12,7 +12,7 @@ def sphere(radius=1.0, position=None, resolution=20, legacy=False):
 	return mesh
 
 # render mesh or list of meshes, or list of dictionaries with keys 'name' and 'geometry'
-def render(mesh, raw_mode=True, show_ui=True, wireframe=False):
+def render(mesh, raw_mode=False, show_ui=True, wireframe=False):
 
 	if wireframe:
 
@@ -40,6 +40,53 @@ def render(mesh, raw_mode=True, show_ui=True, wireframe=False):
 			compute_vertex_normals(mesh)
 		
 		o3d.visualization.draw(mesh, raw_mode=raw_mode, show_ui=show_ui)
+
+# def render(meshes):
+
+# 	import open3d.visualization.gui as gui
+# 	import open3d.visualization.rendering as rendering
+# 	import random
+
+# 	gui.Application.instance.initialize()
+
+# 	if not isinstance(meshes,list):
+# 		meshes = [meshes]
+
+# 	window = gui.Application.instance.create_window("PoseButcher", 1024, 768)
+# 	scene = gui.SceneWidget()
+# 	scene.scene = rendering.Open3DScene(window.renderer)
+# 	scene.scene.set_background([1, 1, 1, 1])
+# 	scene.scene.scene.set_sun_light(
+# 		[-1, -1, -1],  # direction
+# 		[1, 1, 1],  # color
+# 		100000)  # intensity
+# 	scene.scene.scene.enable_sun_light(True)
+# 	window.add_child(scene)
+
+# 	for mesh in meshes:
+
+# 		mat = rendering.MaterialRecord()
+# 		mat.base_color = [
+# 			random.random(),
+# 			random.random(),
+# 			random.random(), 1.0
+# 		]
+# 		mat.shader = "defaultLit"
+
+# 		if isinstance(mesh, dict):
+# 			geometry = mesh['geometry']
+# 			name = mesh['name']
+# 		else:
+# 			geometry = mesh
+# 			name = 'mesh'
+
+# 		geometry.compute_vertex_normals()
+		
+# 		scene.scene.add_geometry(name, geometry, mat)
+
+# 	gui.Application.instance.run()
+
+# 	# gui.Application.instance.quit()
 
 def paint(mesh, colour):
 	if isinstance(mesh, dict):
