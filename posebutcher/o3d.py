@@ -70,7 +70,8 @@ def signed_distance(mesh, point):
 	if isinstance(mesh, dict):
 		mesh = mesh['geometry']
 
-	mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+	if not isinstance(mesh, o3d.t.geometry.TriangleMesh):
+		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
 	_ = scene.add_triangles(mesh)
 
 	return scene.compute_signed_distance(query_point)
@@ -99,6 +100,27 @@ def convex_hull(mesh):
 	else:
 		mesh = mesh.compute_convex_hull()[0]
 		return mesh
+
+def tensor_from_legacy(mesh):
+	return o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+
+def subtract_atoms(mesh, group, r_scale=1.0, use_covalent=False):
+
+	for i,atom in enumerate(group.atoms):
+
+		mout.progress(i, group.num_atoms, prepend='subtracting')
+
+		if use_covalent:
+			r = atom.covalent_radius
+		else:
+			r = atom.vdw_radius
+
+		mesh = mesh.boolean_difference(sphere(r, atom.position), tolerance=0.1)
+
+	mout.finish()
+
+	return mesh
+
 
 ### THIS IS NOT WORKING RELIABLY
 def union_mesh_from_atoms(atoms, skip_hydrogen=True):
