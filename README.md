@@ -1,5 +1,7 @@
 # PoseButcher
 
+*A good butcher always trims the fat*
+
 Pose butcher segments a ligand into categories:
 
 - GOOD:
@@ -14,9 +16,14 @@ Pose butcher segments a ligand into categories:
 
 ## Usage
 
-1. Install:
+0. Dependencies:
 
-`$ pip install git+https://github.com/mwinokan/PoseButcher.git#egg=posebutcher`
+	* MolParse `pip install molparse`
+	* Open3d `pip install open3d`
+
+1. Install PoseButcher:
+
+`pip install git+https://github.com/mwinokan/PoseButcher.git#egg=posebutcher`
 
 2. Import:
 
@@ -30,20 +37,27 @@ Pose butcher segments a ligand into categories:
 
 `result = butcher.chop(pose)`
 
-## Examples
+## Example
+
+Run this from the repository root directory, use a jupyter notebook 
 
 ```
 from posebutcher import Butcher
 
-protein = 'test_data/template.pdb'
+protein = 'test_data/hits/A71EV2A-x0310_0A_bound.pdb'
 hits = 'test_data/filtered.sdf'
-pockets = {}
+
+pockets = {
+    "P1":  dict(type='sphere', atoms=['GLY 127 O', 'PRO 107 CG', 'VAL 124 CG1'], radius='mean'),
+    "P1'": dict(type='sphere', atoms=['VAL 84 CG1', 'TYR 90 CD2', 'SER 87 CB'], radius='mean'),
+}
 
 butcher = Butcher(protein, hits, pockets)
 
-mol_df = PandasTools.LoadSDF('test_data/BBS_AMU_products_fragalysis.sdf')
+df = PandasTools.LoadSDF('test_data/BBS_AMU_products_fragalysis.sdf')
 
-pose = mol_df['ROMol'].values[2]
+mol = df['ROMol'].values[45]
 
-result = butcher.chop(pose)
+result = butcher.chop(mol)
+
 ```
