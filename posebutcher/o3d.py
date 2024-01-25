@@ -269,12 +269,21 @@ def mesh_from_AtomGroup(group, r_scale=1.0, use_covalent=False):
 
 	return {'name':group.name, 'geometry':combined}
 
-def mesh_from_pdb(path):
+def mesh_from_pdb(path, gauss=False):
 
 	import pygamer
 
-	mout.out('pygamer.readPDB_molsurf...')
-	mesh = pygamer.readPDB_molsurf(path)
+	if gauss:
+		mout.out('pygamer.readPDB_gauss...')
+		mesh = pygamer.readPDB_gauss(
+				path, 
+				blobbyness= -0.8,
+				isovalue= 2.5,
+			)
+
+	else:
+		mout.out('pygamer.readPDB_molsurf...')
+		mesh = pygamer.readPDB_molsurf(path)
 
 	mout.out('compute_orientation...')
 	components, orientable, manifold = mesh.compute_orientation()

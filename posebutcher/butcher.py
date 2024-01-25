@@ -92,8 +92,8 @@ class PoseButcher:
 
 		self._build_fragment_bolus()
 
-		self._protein_clash_function = lambda atom: atom.covalent_radius*1.5
-		# self._protein_clash_function = lambda atom: atom.vdw_radius
+		# self._protein_clash_function = lambda atom: atom.covalent_radius*1.5
+		self._protein_clash_function = lambda atom: atom.vdw_radius*0.5
 
 	def __call__(self, pose, **kwargs):
 		# wrapper for Butcher.chop
@@ -102,13 +102,11 @@ class PoseButcher:
 	
 	### PUBLIC METHODS
 
-	def chop(self, pose, protein=None, base=None, draw='2d'):
+	def chop(self, pose, base=None, draw='2d', bolus=True):
 
 		'''Butcher a pose:
 
 		pose: path, MolParse.AtomGroup, or rdkit.Mol
-
-		protein: optionally pass a different protein reference
 		
 		base: optionally pass a reference base compound
 
@@ -133,11 +131,6 @@ class PoseButcher:
 		if draw:
 			assert draw in ['2d', '3d']
 
-		if protein:
-			protein = self._parse_protein(protein)
-		else:
-			protein = self.protein
-
 		if isinstance(pose, Chem.rdchem.Mol):
 			pose = mp.rdkit.mol_to_AtomGroup(pose)
 			atoms = pose.atoms
@@ -148,7 +141,7 @@ class PoseButcher:
 		# classify atoms
 		output = {}
 		for i,atom in enumerate(atoms):
-			output[i] = self._classify_atom(atom)
+			output[i] = self._classify_atom(atom, bolus=bolus)
 
 		# render the result
 		if draw == '2d':
@@ -167,11 +160,17 @@ class PoseButcher:
 			display(drawing)
 
 		elif draw == '3d':
-			from .o3d import render, mesh_from_AtomGroup
-			render([self.protein_mesh, mesh_from_AtomGroup(pose, use_covalent=True)])
+			from .o3d import mesh_from_AtomGroup
+			# render([self.protein_mesh, mesh_from_AtomGroup(pose, use_covalent=True)])
+			self._render_meshes(protein=True, pockets='hide', fragments='hide', hull='hide', extra=mesh_from_AtomGroup(pose, use_covalent=True))
 
 		return output
 
+	def tag(self, pose, draw='2d'):
+
+		output = self.chop(pose, draw=draw, bolus=False)
+
+		return list(set([d[2] for d in output.values() if d[1] == 'pocket']))
 		
 	### PROPERTIES
 
@@ -215,7 +214,7 @@ class PoseButcher:
 			from .o3d import mesh_from_pdb, paint
 			self._hit_mesh = dict(
 				name='fragments',
-				geometry=mesh_from_pdb(self._fragment_bolus_path).to_legacy()
+				geometry=mesh_from_pdb(self._fragment_bolus_path, gauss=False).to_legacy()
 			)
 			
 			paint(self._hit_mesh, [1, 0.706, 0])
@@ -255,7 +254,7 @@ class PoseButcher:
 			mout.out('Generating protein convex hull..')
 			from .o3d import convex_hull
 			mesh = copy.deepcopy(self.protein_mesh['geometry'])
-			self._protein_hull = convex_hull(mesh)
+			self._protein_hull = {'name':'protein hull', 'geometry':convex_hull(mesh)}
 
 		return self._protein_hull
 	
@@ -290,43 +289,64 @@ class PoseButcher:
 		for name, d in pockets.items():
 
 			assert d['type'] == 'sphere'
-			assert 'atoms' in d
+			assert 'atoms' in d or 'center' in d
 
-			radius = d['radius'] if 'radius' in d else None
+			radius = d['radius'] if 'radius' in d else 'mean'
 
-			atoms = [self._get_protein_atom(s) for s in d['atoms']]
+			if 'atoms' not in d:
+				atoms = None
+				center = d['center']
+			else:
+				atoms = [self._get_protein_atom(s) for s in d['atoms']]
+				center = None
 
-			self._spherical_pocket_from_atoms(name, atoms, radius)
+			if 'shift' in d:
+				shift = d['shift']
+			else:
+				shift = None
 
-	def _spherical_pocket_from_atoms(self, name, atoms, radius='mean', subtract_protein=True):
+			self._spherical_pocket_from_atoms(name, atoms, center=center, radius=radius, shift=shift)
+
+		self._clip_pockets()
+
+	def _spherical_pocket_from_atoms(self, name, atoms, center=None, radius='mean', shift=None, subtract_protein=False):
 
 		import random
 		from .o3d import sphere #, subtract_atoms
 
 		# sphere centred between given atoms
 
-		com = sum([a.np_pos for a in atoms])/len(atoms)
-
-		if radius == 'mean':
-			r = sum([np.linalg.norm(a.np_pos - com) for a in atoms])/len(atoms)
-		elif radius == 'max':
-			r = max([np.linalg.norm(a.np_pos - com) for a in atoms])
-		elif radius == 'min':
-			r = min([np.linalg.norm(a.np_pos - com) for a in atoms])
+		if center is None:
+			com = sum([a.np_pos for a in atoms])/len(atoms)
+			
+			if radius == 'mean':
+				r = sum([np.linalg.norm(a.np_pos - com) for a in atoms])/len(atoms)
+			elif radius == 'max':
+				r = max([np.linalg.norm(a.np_pos - com) for a in atoms])
+			elif radius == 'min':
+				r = min([np.linalg.norm(a.np_pos - com) for a in atoms])
+			else:
+				r = float(radius)
+		
 		else:
+			com = center
 			r = float(radius)
 
-		mout.header(f'Pocket "{name}":')
-		mout.var('center', com, unit='Å')
-		mout.var('radius', r, unit='Å')
+		if shift:
+			com += np.array(shift)
+
+		com_str = ', '.join([f'{v:.2f}' for v in com])
+		mout.header(f'Pocket "{name}", radius={r:.2f}, center=[{com_str}]')
+		# mout.var('center', com, unit='Å')
+		# mout.var('radius', r, unit='Å')
 
 		mesh = sphere(r, com)
 
-		if subtract_protein:
-			mout.out('subtracting protein...')
-			from open3d.t.geometry import TriangleMesh
-			protein = TriangleMesh.from_legacy(self.protein_mesh['geometry'])
-			mesh = mesh.boolean_difference(protein)
+		# if subtract_protein:
+		# 	mout.out('subtracting protein...')
+		# 	from open3d.t.geometry import TriangleMesh
+		# 	protein = TriangleMesh.from_legacy(self.protein_mesh['geometry'])
+		# 	mesh = mesh.boolean_difference(protein)
 
 		from open3d.visualization.rendering import MaterialRecord
 		mat = MaterialRecord()
@@ -337,7 +357,74 @@ class PoseButcher:
 		]
 		mat.shader = "defaultLit"
 
-		self._new_pocket(name, mesh, mat)
+		self._new_pocket(name, mesh, mat, radius=r)
+
+	def _clip_pockets(self, protein=True, pockets=True, hull=False, pocket_bisector=False):
+		
+		# from .o3d import convex_hull
+		from open3d.t.geometry import TriangleMesh
+		mout.out('Clipping pockets...')
+
+		# clip the pockets to the protein
+		if pockets:
+			mout.out('pocket-pocket intersection...')
+
+			for i,pocket1 in enumerate(self.pocket_meshes):
+
+				for pocket2 in self.pocket_meshes[i+1:]:
+
+					# mout.header(f"{pocket1['name']} {pocket2['name']}")
+
+					center1 = pocket1['geometry'].get_center()
+					center2 = pocket2['geometry'].get_center()
+
+					distance = np.linalg.norm((center1 - center2).numpy())
+					# mout.var('distance',distance)
+
+					r_sum = pocket1['radius'] + pocket2['radius']
+					# mout.var('r_sum',r_sum)
+
+					if distance >= r_sum:
+						continue
+
+					if pocket_bisector:
+						plane_center = (center1 + center2)/2
+					else:
+						x = (distance*distance - pocket2['radius']*pocket2['radius'] + pocket1['radius']*pocket1['radius'])/(2*distance)
+						# mout.var('x',x)
+
+						plane_center = center1 + x / distance * (center2 - center1).numpy()
+					# mout.var('plane_center',plane_center)
+
+					plane_normal = (center1 - center2)
+					# mout.var('plane_normal',plane_normal)
+
+					pocket1['geometry'] = pocket1['geometry'].clip_plane(plane_center, plane_normal)
+
+					pocket2['geometry'] = pocket2['geometry'].clip_plane(plane_center, -plane_normal)
+
+			mout.out('pocket convex hull...')
+			for pocket in self.pocket_meshes:
+				pocket['geometry'] = pocket['geometry'].compute_convex_hull()
+				# pocket = convex_hull(pocket)
+
+		# clip the pockets by their bisector planes
+		if protein:
+			mout.out('clipping pockets (protein)')
+			
+			protein = TriangleMesh.from_legacy(self.protein_mesh['geometry'])
+
+			for mesh in self.pocket_meshes:
+				mesh['geometry'] = mesh['geometry'].boolean_difference(protein)
+
+		# clip the pockets to the convex hull of the protein
+		if hull:
+			mout.out('clipping pockets (protein hull)')
+
+			protein = TriangleMesh.from_legacy(self.protein_hull)
+
+			for mesh in self.pocket_meshes:
+				mesh['geometry'] = mesh['geometry'].boolean_intersection(protein)
 
 	def _get_protein_atom(self, query: str):
 
@@ -359,16 +446,20 @@ class PoseButcher:
 
 		return res.get_atom(atom_name)
 
-	def _new_pocket(self, name, mesh, material=None):
+	def _new_pocket(self, name, mesh, material=None, **kwargs):
 		self._pockets[name] = {'name':name, 'geometry':mesh}
 		if material:
 			self._pockets[name]['material'] = material
 
-	def _classify_atom(self, atom):
+		if kwargs:
+			for k,v in kwargs.items():
+				self._pockets[name][k] = v
+
+	def _classify_atom(self, atom, bolus=True):
 		
 		from .o3d import is_point_in_mesh
 
-		if is_point_in_mesh(self.hit_mesh, atom.position):
+		if bolus and is_point_in_mesh(self.hit_mesh, atom.position):
 			return ('GOOD','fragment space')
 
 		# protein clash
@@ -405,9 +496,52 @@ class PoseButcher:
 
 		return fig
 
-	def _render_meshes(self, pockets=True, wireframe=False):
+	def _render_meshes(self, protein=True, pockets=True, fragments=True, hull=False, wireframe=False, extra=None):
 		from .o3d import render
-		render([self.hit_mesh, self.protein_mesh] + self.pocket_meshes, wireframe=wireframe)
+
+		meshes = []
+
+		if protein:
+			if protein == 'hide':
+				self.protein_mesh['is_visible'] = False
+			else:
+				self.protein_mesh['is_visible'] = True
+			
+			meshes.append(self.protein_mesh)
+
+		if fragments:
+			if fragments == 'hide':
+				self.hit_mesh['is_visible'] = False
+			else:
+				self.hit_mesh['is_visible'] = True
+
+			meshes.append(self.hit_mesh)
+
+		if hull:
+			if hull == 'hide':
+				self.protein_hull['is_visible'] = False
+			else:
+				self.protein_hull['is_visible'] = True
+
+			meshes.append(self.protein_hull)
+
+		if pockets:
+			if pockets == 'hide':
+				for pocket in self.pocket_meshes:
+					pocket['is_visible'] = False
+			else:
+				for pocket in self.pocket_meshes:
+					pocket['is_visible'] = True
+
+			meshes += self.pocket_meshes
+
+		if extra:
+			if isinstance(extra, list):
+				meshes += extra
+			else:
+				meshes.append(extra)
+
+		render(meshes, wireframe=wireframe)
 		# render([self.hit_mesh] + self.pocket_meshes, wireframe=wireframe)
 		# render([self.hit_mesh], wireframe=wireframe)
 
