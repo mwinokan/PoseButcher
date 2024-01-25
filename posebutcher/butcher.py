@@ -1,6 +1,6 @@
 
 from rdkit import Chem
-from rdkit.Chem import PandasTools, AllChem, rdDepictor
+from rdkit.Chem import PandasTools, AllChem, rdDepictor, rdFMCS
 import molparse as mp
 from pathlib import Path
 import mgo
@@ -134,6 +134,7 @@ class PoseButcher:
 		if isinstance(pose, Chem.rdchem.Mol):
 			pose = mp.rdkit.mol_to_AtomGroup(pose)
 			atoms = pose.atoms
+
 		else:
 			assert hasattr(pose, 'atoms')
 			atoms = pose.atoms
@@ -142,6 +143,18 @@ class PoseButcher:
 		output = {}
 		for i,atom in enumerate(atoms):
 			output[i] = self._classify_atom(atom, bolus=bolus)
+
+		if base:
+			if isinstance(base,str):
+				base = mp.rdkit.mol_from_smiles(base)
+
+			mol = pose.rdkit_mol
+			res = rdFMCS.FindMCS([mol, base])
+			mcs_mol = Chem.MolFromSmarts(res.smartsString)
+			matches = mol.GetSubstructMatch(mcs_mol)
+
+			for i in matches:
+				output[i] = ('BASE', 'atom in base')
 
 		# render the result
 		if draw == '2d':
@@ -153,7 +166,7 @@ class PoseButcher:
 
 			drawing = mp.rdkit.draw_highlighted_mol(
 				mol,
-				output_to_color_pairs(output),
+				self._output_to_color_pairs(output),
 				legend=pose.name,
 			)
 
@@ -166,11 +179,14 @@ class PoseButcher:
 
 		return output
 
-	def tag(self, pose, draw='2d'):
+	def tag(self, pose, draw='2d', pockets_only=False):
 
 		output = self.chop(pose, draw=draw, bolus=False)
 
-		return list(set([d[2] for d in output.values() if d[1] == 'pocket']))
+		if pockets_only:
+			return list(set([d[2] for d in output.values() if d[1] == 'pocket']))
+		else:
+			return list(set([d[2] if d[1] == 'pocket' else d[1] for d in output.values()]))
 		
 	### PROPERTIES
 
@@ -217,7 +233,7 @@ class PoseButcher:
 				geometry=mesh_from_pdb(self._fragment_bolus_path, gauss=False).to_legacy()
 			)
 			
-			paint(self._hit_mesh, [1, 0.706, 0])
+			paint(self._hit_mesh, FRAGMENT_COLOR)
 
 		return self._hit_mesh
 
@@ -225,18 +241,14 @@ class PoseButcher:
 	def protein_mesh(self):
 		if self._protein_mesh is None:
 			mout.out('Generating protein mesh...')
-			# from .o3d import mesh_from_AtomGroup, paint
-			# self._protein_mesh = mesh_from_AtomGroup(self.protein)
 
 			from .o3d import mesh_from_pdb, paint
 			self._protein_mesh = dict(
 				name='protein',
 				geometry=mesh_from_pdb(self._apo_protein_path).to_legacy()
 			)
-
-			# self._protein_mesh = self._protein_mesh.to_legacy()
 			
-			paint(self._protein_mesh, [0.098, 0.463, 0.824])
+			paint(self._protein_mesh, PROTEIN_COLOR)
 
 		return self._protein_mesh
 
@@ -350,14 +362,16 @@ class PoseButcher:
 
 		from open3d.visualization.rendering import MaterialRecord
 		mat = MaterialRecord()
+		color = POCKET_COLORS[len(self.pocket_meshes)]
 		mat.base_color = [
-			random.random(),
-			random.random(),
-			random.random(), 1.0
+			color[0],
+			color[1],
+			color[2],
+			0.5,
 		]
 		mat.shader = "defaultLit"
 
-		self._new_pocket(name, mesh, mat, radius=r)
+		self._new_pocket(name, mesh, mat, radius=r, color=color)
 
 	def _clip_pockets(self, protein=True, pockets=True, hull=False, pocket_bisector=False):
 		
@@ -542,29 +556,32 @@ class PoseButcher:
 				meshes.append(extra)
 
 		render(meshes, wireframe=wireframe)
-		# render([self.hit_mesh] + self.pocket_meshes, wireframe=wireframe)
-		# render([self.hit_mesh], wireframe=wireframe)
 
-def output_to_color_pairs(output):
+	def _output_to_color_pairs(self,output):
 
-	lookup = {
-		'fragment space': None,
-		'pocket': (0,1,0),
-		'protein clash': (1,0,0),
-		'solvent space': (0,0,1),
-	}
+		pairs = []
+		for k,v in output.items():
 
-	pairs = []
-	for k,v in output.items():
+			# c = lookup[v[1]]
 
-		c = lookup[v[1]]
+			if v[1] == 'pocket':
+				c = self.pockets[v[2]]['color']
 
-		if c is None:
-			continue
+			elif v[1] == 'protein clash':
+				c = PROTEIN_COLOR
 
-		pairs.append((k,c))
+			elif v[1] == 'solvent space':
+				c = SOLVENT_COLOR
 
-	return pairs
+			elif v[0] == 'BASE':
+				c = BASE_COLOR
+
+			else:
+				continue
+
+			pairs.append((k,c))
+
+		return pairs
 
 def output_to_label(output, index):
 
@@ -572,5 +589,32 @@ def output_to_label(output, index):
 
 	if output_tuple[1] == 'pocket':
 		return f'{output_tuple[2]}'
+	
+	if output_tuple[1] == 'solvent space':
+		return 'SOL.'
+
+	# if output_tuple[0] == 'BASE':
+	# 	return 'BASE'
+	
+	if output_tuple[1] == 'protein clash':
+		return 'PROT.'
 
 	return ''
+    
+PROTEIN_COLOR = (0.8392156862745098, 0.15294117647058825, 0.1568627450980392)  # 'tab:red'
+SOLVENT_COLOR = (0.12156862745098039, 0.4666666666666667, 0.7058823529411765)  # 'tab:blue'
+FRAGMENT_COLOR = (1.0, 0.4980392156862745, 0.054901960784313725) 			   # 'tab:orange'
+BASE_COLOR = (0.4980392156862745, 0.4980392156862745, 0.4980392156862745)   # 'tab:gray'
+
+POCKET_COLORS = [
+    (0.17254901960784313, 0.6274509803921569, 0.17254901960784313), # 'tab:green'
+    (0.5803921568627451, 0.403921568627451, 0.7411764705882353),    # 'tab:purple'
+    (0.5490196078431373, 0.33725490196078434, 0.29411764705882354), # 'tab:brown'
+    (0.8901960784313725, 0.4666666666666667, 0.7607843137254902),   # 'tab:pink'
+    (0.7372549019607844, 0.7411764705882353, 0.13333333333333333),  # 'tab:olive'
+    (0.09019607843137255, 0.7450980392156863, 0.8117647058823529),  # 'tab:cyan'
+    
+    (0.4980392156862745, 0.4980392156862745, 0.4980392156862745),   # 'tab:gray'
+    (1.0, 0.4980392156862745, 0.054901960784313725), 				# 'tab:orange'
+    (0.8392156862745098, 0.15294117647058825, 0.1568627450980392),  # 'tab:red'
+]
