@@ -1,24 +1,14 @@
 
-from rdkit import Chem
-from rdkit.Chem import PandasTools, AllChem, rdDepictor, rdFMCS
-from rdkit.Chem.rdchem import Mol
-
+# MolParse
 import molparse as mp
 from molparse import AtomGroup
 
+# for type hinting
 from pathlib import Path
+from rdkit.Chem.rdchem import Mol
 
-import mgo
-
-import plotly.graph_objects as go
-
-import copy
-
+# console output
 import mout
-import mcol
-
-import numpy as np
-
 
 class PoseButcher:
 
@@ -169,6 +159,8 @@ class PoseButcher:
 		}
 		'''
 
+		from rdkit import Chem
+
 		# parse arguments
 
 		if draw:
@@ -192,6 +184,7 @@ class PoseButcher:
 				base = mp.rdkit.mol_from_smiles(base)
 
 			mol = pose.rdkit_mol
+			from rdkit.Chem import rdFMCS
 			res = rdFMCS.FindMCS([mol, base])
 			mcs_mol = Chem.MolFromSmarts(res.smartsString)
 			matches = mol.GetSubstructMatch(mcs_mol)
@@ -203,6 +196,7 @@ class PoseButcher:
 		if draw == '2d':
 
 			# get a flat depiction of the molecule
+			from rdkit.Chem import rdDepictor
 			mol = pose.rdkit_mol
 			rdDepictor.Compute2DCoords(mol)
 
@@ -342,7 +336,8 @@ class PoseButcher:
 		if self._protein_hull is None:
 			mout.out('Generating protein convex hull..')
 			from .o3d import convex_hull, paint
-			mesh = copy.deepcopy(self.protein_mesh['geometry'])
+			from copy import deepcopy
+			mesh = deepcopy(self.protein_mesh['geometry'])
 			paint(mesh, PROTEIN_COLOR)
 			self._protein_hull = {'name':'protein hull', 'geometry':convex_hull(mesh)}
 
@@ -363,7 +358,9 @@ class PoseButcher:
 	def _parse_fragments(self, fragments):
 		
 		if isinstance(fragments,str) and fragments.endswith('.sdf'):
+			import mcol
 			mout.out(f'parsing {mcol.file}{fragments}{mcol.clear} ...', end='')
+			from rdkit.Chem import PandasTools
 			self._fragment_df = PandasTools.LoadSDF(fragments)
 			mout.out('Done.')
 			return
@@ -408,13 +405,15 @@ class PoseButcher:
 
 		if center is None:
 			com = sum([a.np_pos for a in atoms])/len(atoms)
+
+			from numpy.linalg import norm
 			
 			if radius == 'mean':
-				r = sum([np.linalg.norm(a.np_pos - com) for a in atoms])/len(atoms)
+				r = sum([norm(a.np_pos - com) for a in atoms])/len(atoms)
 			elif radius == 'max':
-				r = max([np.linalg.norm(a.np_pos - com) for a in atoms])
+				r = max([norm(a.np_pos - com) for a in atoms])
 			elif radius == 'min':
-				r = min([np.linalg.norm(a.np_pos - com) for a in atoms])
+				r = min([norm(a.np_pos - com) for a in atoms])
 			else:
 				r = float(radius)
 		
@@ -423,7 +422,8 @@ class PoseButcher:
 			r = float(radius)
 
 		if shift:
-			com += np.array(shift)
+			from numpy import array
+			com += array(shift)
 
 		com_str = ', '.join([f'{v:.2f}' for v in com])
 		mout.header(f'Pocket "{name}", radius={r:.2f}, center=[{com_str}]')
@@ -445,8 +445,9 @@ class PoseButcher:
 
 	def _clip_pockets(self, protein=True, pockets=True, hull=False, pocket_bisector=False):
 		
-		# from .o3d import convex_hull
+		from numpy.linalg import norm
 		from open3d.t.geometry import TriangleMesh
+
 		mout.out('Clipping pockets...')
 
 		# clip the pockets to the protein
@@ -462,11 +463,9 @@ class PoseButcher:
 					center1 = pocket1['geometry'].get_center()
 					center2 = pocket2['geometry'].get_center()
 
-					distance = np.linalg.norm((center1 - center2).numpy())
-					# mout.var('distance',distance)
+					distance = norm((center1 - center2).numpy())
 
 					r_sum = pocket1['radius'] + pocket2['radius']
-					# mout.var('r_sum',r_sum)
 
 					if distance >= r_sum:
 						continue
