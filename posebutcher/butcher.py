@@ -300,7 +300,7 @@ class PoseButcher:
 			chain.add_residue(res)
 			sys.add_chain(chain)
 
-			self._fragment_bolus_path = 'fragment_bolus.pdb'
+			self._fragment_bolus_path = '_butcher_fragments.pdb'
 			mp.writePDB(self._fragment_bolus_path, sys, shift_name=True)
 
 			# create the mesh from the PDB
@@ -354,7 +354,7 @@ class PoseButcher:
 		
 		if isinstance(protein,str) or isinstance(protein, Path):
 			self._protein = mp.parse(protein).protein_system
-			self._apo_protein_path = f'apo_template.pdb'
+			self._apo_protein_path = f'_butcher_protein.pdb'
 			mp.writePDB(self._apo_protein_path, self._protein, shift_name=True)
 
 		else:
@@ -568,17 +568,6 @@ class PoseButcher:
 				atoms.append(atom)
 
 		self._fragment_atomgroup = mp.AtomGroup.from_any('Fragment Bolus', atoms)
-
-	def _plot_fragment_bolus(self, fig=None):
-
-		if not fig:
-			fig = go.Figure()
-
-		for vol in self.fragment_volume.volumes:
-
-			fig.add_trace(mgo.sphere_trace(vol.centre, vol.radius))
-
-		return fig
 
 	def _render_meshes(self, protein=True, pockets=True, fragments=True, hull=False, wireframe=False, extra=None):
 		from .o3d import render
