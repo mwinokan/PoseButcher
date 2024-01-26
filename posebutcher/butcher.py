@@ -10,6 +10,7 @@ import mout
 import mcol
 import numpy as np
 
+
 class PoseButcher:
 
 	"""
@@ -18,28 +19,48 @@ class PoseButcher:
 	============
 
 	"A good butcher always trims the fat"
+
+	PoseButcher is a tool for categorising and segmenting virtual hits with reference to experimental protein structures and (fragment) hits.
 	
-	Pose butcher segments a ligand into categories:
+	Ligand atoms are tagged with categories:
 
 		- GOOD:
 
 			* fragment space: within the fragment bolus
-			* pocket X: in desirable pocket X
+			* pocket X: in a specified catalytic/allosteric pocket X
 
 		- BAD:
 			
-			* solvent space: Heading out of the protein/crystal
 			* protein clash: Clashing with the protein
+			* solvent space: Heading out of the protein/crystal
 
-	Usage:
+	Usage
+	-----
 
-		1. Create the butcher:
+		1. Create the butcher (see PoseButcher.__init__):
 
-			butcher = Butcher(protein, hits, pockets)
+			from posebutcher import PoseButcher
+			butcher = PoseButcher(protein, hits, pockets)
 
-		2. Chop up an rdkit.ROMol ligand (with a conformer):
+		2. Chop up a posed virtual hit (rdkit.ROMol with a conformer):
 
-			result = butcher.chop(mol, draw='2d')
+			result = butcher.chop(mol)
+
+		3. Tag a compound based on its pocket occupancy and clashes:
+
+			tags = butcher.tag(mol)
+
+		4. (Coming soon) Trim a parts of a compound that clash with a protein or leave the crystal
+
+			mol = butcher.trim(mol)
+
+		5. (Coming soon) Explore the expansion opportunities from a given atom in a virtual hit
+
+			result = butcher.explore(mol, index, direction)
+
+		6. (Coming soon) Score how well a virtual hit recapitulates shape and colour of the fragment bolus
+
+			score: float = butcher.score(mol)
 
 	"""
 
@@ -78,42 +99,49 @@ class PoseButcher:
 
 		self._pockets = {}
 		
-		self._protein = None 		# molparse.System
-		self._hit_df = None  		# pandas.DataFrame
-		self._hit_atomgroup = None 	# molparse.AtomGroup
-		self._hit_mesh = None 		# open3d.geometry.TriangleMesh
-		
-		self._protein_mesh = None 	# open3d.geometry.TriangleMesh
-		self._protein_hull = None 	# open3d.geometry.TriangleMesh
+		self._protein = None 				# molparse.System
+		self._protein_mesh = None 			# open3d.geometry.TriangleMesh
+		self._protein_hull = None 			# open3d.geometry.TriangleMesh
+
+		self._fragment_df = None  			# pandas.DataFrame
+		self._fragment_atomgroup = None 	# molparse.AtomGroup
+		self._fragment_mesh = None 			# open3d.geometry.TriangleMesh
 
 		self._parse_protein(protein)
-		self._parse_hits(hits)
+		self._parse_fragments(fragments)
 		self._parse_pockets(pockets)
 
-		self._build_fragment_bolus()
+		self._build_fragment_bolus()å
 
-		# self._protein_clash_function = lambda atom: atom.covalent_radius*1.5
+		# define atom clashes with the protein surface:
 		self._protein_clash_function = lambda atom: atom.vdw_radius*0.5
-
-	def __call__(self, pose, **kwargs):
-		# wrapper for Butcher.chop
-		self.chop(pose, **kwargs)
 
 	
 	### PUBLIC METHODS
 
-	def chop(self, pose, base=None, draw='2d', bolus=True):
+	def chop(self, 
+		pose: rdkit.ROMol | mp.AtomGroup, 
+		base: str | rdkit.ROMol | None = None, 
+		draw: str | None = '2d', 
+		fragments: bool = True,
+	) --> dict [str, tuple]:
 
-		'''Butcher a pose:
+		'''
 
-		pose: path, MolParse.AtomGroup, or rdkit.Mol
+		For each atom [1] in the provided molecule evaluates if it is:
+
+		* in the fragment bolus [2]: 	('GOOD', 'fragment space')
+		* in a defined pocket X: 		('GOOD', 'pocket', X)
 		
-		base: optionally pass a reference base compound
+		* clashing with the protein: 	('BAD', 'protein clash')
+		* leaving the protein: 			('BAD', 'solvent space')
 
-		draw: one of:
+		[1] if a base is provided atoms in the MCS between [pose,base] are ignored
+		[2] only if the fragments argument is truthy
 
-				- '2d' rdkit 2d drawing
-				- '3d' open3d render
+		Draw must be one of:
+			- '2d' rdkit 2d drawing
+			- '3d' open3d render
 
 		Returns labelled atom indices: e.g.
 
@@ -142,7 +170,7 @@ class PoseButcher:
 		# classify atoms
 		output = {}
 		for i,atom in enumerate(atoms):
-			output[i] = self._classify_atom(atom, bolus=bolus)
+			output[i] = self._classify_atom(atom, fragments=fragments)
 
 		if base:
 			if isinstance(base,str):
@@ -158,12 +186,16 @@ class PoseButcher:
 
 		# render the result
 		if draw == '2d':
-			mol = mp.rdkit.mol_from_pdb_block(pose.pdb_block)
+
+			# get a flat depiction of the molecule
+			mol = pose.rdkit_mol
 			rdDepictor.Compute2DCoords(mol)
 
+			# add labels to the atoms
 			for atom in mol.GetAtoms():
 				atom.SetProp('atomNote',output_to_label(output, atom.GetIdx()))
 
+			# create the drawing
 			drawing = mp.rdkit.draw_highlighted_mol(
 				mol,
 				self._output_to_color_pairs(output),
@@ -173,21 +205,48 @@ class PoseButcher:
 			display(drawing)
 
 		elif draw == '3d':
+
 			from .o3d import mesh_from_AtomGroup
-			# render([self.protein_mesh, mesh_from_AtomGroup(pose, use_covalent=True)])
-			self._render_meshes(protein=True, pockets='hide', fragments='hide', hull='hide', extra=mesh_from_AtomGroup(pose, use_covalent=True))
+			self._render_meshes(
+				protein=True, 
+				pockets='hide', 
+				fragments='hide', 
+				hull='hide', 
+				extra=mesh_from_AtomGroup(pose, use_covalent=True)
+			)
 
 		return output
 
-	def tag(self, pose, draw='2d', pockets_only=False):
+	def tag(self, 
+		pose: rdkit.ROMol | mp.AtomGroup, 
+		base: str | rdkit.ROMol | None = None, 
+		draw: str | None = '2d', 
+		pockets_only: bool = False,
+	) --> set:
 
-		output = self.chop(pose, draw=draw, bolus=False)
+		"""Return a set of string tags signifying which pockets and optionally 
+		any protein/solvent clashes are relevant to this ligand.
+
+		If pockets_only is truthy, protein/solvent clashes are not tagged.
+
+		See the docstring for PoseButcher.chop() to see information about the other arguments."""
+
+		output = self.chop(pose, draw=draw, base=base, draw=draw, fragments=False)
 
 		if pockets_only:
-			return list(set([d[2] for d in output.values() if d[1] == 'pocket']))
+			return set([d[2] for d in output.values() if d[1] == 'pocket'])
 		else:
-			return list(set([d[2] if d[1] == 'pocket' else d[1] for d in output.values()]))
+			return set([d[2] if d[1] == 'pocket' else d[1] for d in output.values()])
 		
+	def trim(self):
+		raise NotImplementedError
+
+	def explore(self):
+		raise NotImplementedError
+
+	def score(self):
+		raise NotImplementedError
+
 	### PROPERTIES
 
 	@property
@@ -199,16 +258,16 @@ class PoseButcher:
 		return self._pockets
 
 	@property
-	def hit_df(self):
-		return self._hit_df
+	def fragment_df(self):
+		return self._fragment_df
 
 	@property
-	def hit_atomgroup(self):
-		return self._hit_atomgroup
+	def fragment_atomgroup(self):
+		return self._fragment_atomgroup
 
 	@property
-	def hit_mesh(self):
-		if self._hit_mesh is None:
+	def fragment_mesh(self):
+		if self._fragment_mesh is None:
 
 			# create fragment bolus PDB
 			
@@ -228,14 +287,14 @@ class PoseButcher:
 
 			# create the mesh from the PDB
 			from .o3d import mesh_from_pdb, paint
-			self._hit_mesh = dict(
+			self._fragment_mesh = dict(
 				name='fragments',
 				geometry=mesh_from_pdb(self._fragment_bolus_path, gauss=False).to_legacy()
 			)
 			
-			paint(self._hit_mesh, FRAGMENT_COLOR)
+			paint(self._fragment_mesh, FRAGMENT_COLOR)
 
-		return self._hit_mesh
+		return self._fragment_mesh
 
 	@property
 	def protein_mesh(self):
@@ -284,13 +343,13 @@ class PoseButcher:
 
 	def _parse_hits(self, hits):
 		
-		if isinstance(hits,str) and hits.endswith('.sdf'):
-			mout.out(f'parsing {mcol.file}{hits}{mcol.clear} ...', end='')
-			self._hit_df = PandasTools.LoadSDF(hits)
+		if isinstance(fragments,str) and fragments.endswith('.sdf'):
+			mout.out(f'parsing {mcol.file}{fragments}{mcol.clear} ...', end='')
+			self._fragments_df = PandasTools.LoadSDF(fragments)
 			mout.out('Done.')
 			return
 		
-		elif isinstance(hits, Path) and hits.is_dir():
+		elif isinstance(fragments, Path) and fragments.is_dir():
 			raise NotImplementedError
 
 		else:
@@ -349,16 +408,8 @@ class PoseButcher:
 
 		com_str = ', '.join([f'{v:.2f}' for v in com])
 		mout.header(f'Pocket "{name}", radius={r:.2f}, center=[{com_str}]')
-		# mout.var('center', com, unit='Å')
-		# mout.var('radius', r, unit='Å')
 
 		mesh = sphere(r, com)
-
-		# if subtract_protein:
-		# 	mout.out('subtracting protein...')
-		# 	from open3d.t.geometry import TriangleMesh
-		# 	protein = TriangleMesh.from_legacy(self.protein_mesh['geometry'])
-		# 	mesh = mesh.boolean_difference(protein)
 
 		from open3d.visualization.rendering import MaterialRecord
 		mat = MaterialRecord()
@@ -473,7 +524,7 @@ class PoseButcher:
 		
 		from .o3d import is_point_in_mesh
 
-		if bolus and is_point_in_mesh(self.hit_mesh, atom.position):
+		if bolus and is_point_in_mesh(self.fragment_mesh, atom.position):
 			return ('GOOD','fragment space')
 
 		# protein clash
@@ -491,20 +542,20 @@ class PoseButcher:
 
 		atoms = []
 
-		for name,mol in zip(self.hit_df['ID'],self.hit_df['ROMol']):
+		for name,mol in zip(self.fragment_df['ID'],self.fragment_df['ROMol']):
 
 			for atom in mp.rdkit.mol_to_AtomGroup(mol).atoms:
 				atom.residue = name
 				atoms.append(atom)
 
-		self._hit_atomgroup = mp.AtomGroup.from_any('Fragment Bolus', atoms)
+		self._fragment_atomgroup = mp.AtomGroup.from_any('Fragment Bolus', atoms)
 
 	def _plot_fragment_bolus(self, fig=None):
 
 		if not fig:
 			fig = go.Figure()
 
-		for vol in self.hit_volume.volumes:
+		for vol in self.fragment_volume.volumes:
 
 			fig.add_trace(mgo.sphere_trace(vol.centre, vol.radius))
 
@@ -525,11 +576,11 @@ class PoseButcher:
 
 		if fragments:
 			if fragments == 'hide':
-				self.hit_mesh['is_visible'] = False
+				self.fragment_mesh['is_visible'] = False
 			else:
-				self.hit_mesh['is_visible'] = True
+				self.fragment_mesh['is_visible'] = True
 
-			meshes.append(self.hit_mesh)
+			meshes.append(self.fragment_mesh)
 
 		if hull:
 			if hull == 'hide':
@@ -562,8 +613,6 @@ class PoseButcher:
 		pairs = []
 		for k,v in output.items():
 
-			# c = lookup[v[1]]
-
 			if v[1] == 'pocket':
 				c = self.pockets[v[2]]['color']
 
@@ -592,9 +641,6 @@ def output_to_label(output, index):
 	
 	if output_tuple[1] == 'solvent space':
 		return 'SOL.'
-
-	# if output_tuple[0] == 'BASE':
-	# 	return 'BASE'
 	
 	if output_tuple[1] == 'protein clash':
 		return 'PROT.'

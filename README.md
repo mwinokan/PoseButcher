@@ -1,63 +1,58 @@
+
 # PoseButcher
 
-*A good butcher always trims the fat*
+"A good butcher always trims the fat"
 
-Pose butcher segments a ligand into categories:
+PoseButcher is a tool for categorising and segmenting virtual hits with reference to experimental protein structures and (fragment) hits.
 
-- GOOD:
+Ligand atoms are tagged with categories:
 
-	* fragment space: in catalytic fragment space
-	* pocket X: in desirable pocket X
+	- GOOD:
 
-- BAD:
-	
-	* solvent space: Heading out of the protein/crystal
-	* protein clash: Clashing with the protein
+		* fragment space: within the fragment bolus
+		* pocket X: in a specified catalytic/allosteric pocket X
 
-## Usage
+	- BAD:
+		
+		* protein clash: Clashing with the protein
+		* solvent space: Heading out of the protein/crystal
 
-0. Dependencies:
+## Usage at a glance
 
-	* MolParse `pip install molparse`
-	* Open3d `pip install open3d`
+	1. Create the butcher (see PoseButcher.__init__):
+
+		from posebutcher import PoseButcher
+		butcher = PoseButcher(protein, hits, pockets)
+
+	2. Chop up a posed virtual hit (rdkit.ROMol with a conformer):
+
+		result = butcher.chop(mol)
+
+	3. Tag a compound based on its pocket occupancy and clashes:
+
+		tags = butcher.tag(mol)
+
+	4. (Coming soon) Trim a parts of a compound that clash with a protein or leave the crystal
+
+		mol = butcher.trim(mol)
+
+	5. (Coming soon) Explore the expansion opportunities from a given atom in a virtual hit
+
+		result = butcher.explore(mol, index, direction)
+
+	6. (Coming soon) Score how well a virtual hit recapitulates shape and colour of the fragment bolus
+
+		score: float = butcher.score(mol)
+
+## Installation
 
 1. Install PoseButcher:
 
 `pip install git+https://github.com/mwinokan/PoseButcher.git#egg=posebutcher`
 
-2. Import:
+`pip install posebutcher`
 
-`from posebutcher import Butcher`
+## Examples
 
-2. Create the butcher:
+PoseButcher ships with some open access test data from the XChem group at Diamond Light Source, funded by the ASAP consortium.
 
-`butcher = Butcher(protein, hits, pockets)`
-
-3. Chop up a ligand pose:
-
-`result = butcher.chop(pose)`
-
-## Example
-
-Run this from the repository root directory, use a jupyter notebook 
-
-```
-from posebutcher import Butcher
-
-protein = 'test_data/hits/A71EV2A-x0310_0A_bound.pdb'
-hits = 'test_data/filtered.sdf'
-
-pockets = {
-    "P1":  dict(type='sphere', atoms=['GLY 127 O', 'PRO 107 CG', 'VAL 124 CG1'], radius='mean'),
-    "P1'": dict(type='sphere', atoms=['VAL 84 CG1', 'TYR 90 CD2', 'SER 87 CB'], radius='mean'),
-}
-
-butcher = Butcher(protein, hits, pockets)
-
-df = PandasTools.LoadSDF('test_data/BBS_AMU_products_fragalysis.sdf')
-
-mol = df['ROMol'].values[45]
-
-result = butcher.chop(mol)
-
-```
