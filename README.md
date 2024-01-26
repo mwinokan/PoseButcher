@@ -48,11 +48,16 @@ Ligand atoms are tagged with categories:
 
 1. Install PoseButcher:
 
-`pip install git+https://github.com/mwinokan/PoseButcher.git#egg=posebutcher`
-
 `pip install posebutcher`
 
 ## Examples
 
 PoseButcher ships with some open access test data from the XChem group at Diamond Light Source, funded by the ASAP consortium.
 
+To run the "example.ipynb":
+
+```
+git clone git@github.com:mwinokan/PoseButcher
+cd PoseButcher
+jupyter lab
+```
