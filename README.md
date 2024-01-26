@@ -44,6 +44,16 @@ Ligand atoms are tagged with categories:
 
 		score: float = butcher.score(mol)
 
+## Sample output
+
+### Protein, fragment bolus, and catalytic pockets with Open3D:
+
+![butcher_3d](https://github.com/mwinokan/PoseButcher/assets/36866506/5162fa10-8003-4980-aa08-0cbc0d38a0f5)
+
+### A chopped up ligand:
+
+![butcher_2d](https://github.com/mwinokan/PoseButcher/assets/36866506/f4947703-83f9-45f5-8e70-108918582938)
+
 ## Installation
 
 1. Install PoseButcher:
