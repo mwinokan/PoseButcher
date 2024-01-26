@@ -1,13 +1,22 @@
 
 from rdkit import Chem
 from rdkit.Chem import PandasTools, AllChem, rdDepictor, rdFMCS
+from rdkit.Chem.rdchem import Mol
+
 import molparse as mp
+from molparse import AtomGroup
+
 from pathlib import Path
+
 import mgo
+
 import plotly.graph_objects as go
+
 import copy
+
 import mout
 import mcol
+
 import numpy as np
 
 
@@ -66,7 +75,11 @@ class PoseButcher:
 
 	### DUNDERS
 
-	def __init__(self, protein, hits, pockets):
+	def __init__(self, 
+		protein: str | Path, 
+		fragments: str | Path, 
+		pockets: dict [str, dict] | None = None,
+	) -> None:
 
 		'''Create a Butcher with a protein structure and pocket information
 
@@ -109,9 +122,11 @@ class PoseButcher:
 
 		self._parse_protein(protein)
 		self._parse_fragments(fragments)
-		self._parse_pockets(pockets)
+		
+		if pockets:
+			self._parse_pockets(pockets)
 
-		self._build_fragment_bolus()å
+		self._build_fragment_bolus()
 
 		# define atom clashes with the protein surface:
 		self._protein_clash_function = lambda atom: atom.vdw_radius*0.5
@@ -120,11 +135,11 @@ class PoseButcher:
 	### PUBLIC METHODS
 
 	def chop(self, 
-		pose: rdkit.ROMol | mp.AtomGroup, 
-		base: str | rdkit.ROMol | None = None, 
-		draw: str | None = '2d', 
-		fragments: bool = True,
-	) --> dict [str, tuple]:
+		pose: Mol | AtomGroup, 
+		base: str | Mol | None = None, 
+		draw: str | None | bool = '2d', 
+		fragments: bool = False,
+	) -> dict [str, tuple]:
 
 		'''
 
@@ -218,11 +233,11 @@ class PoseButcher:
 		return output
 
 	def tag(self, 
-		pose: rdkit.ROMol | mp.AtomGroup, 
-		base: str | rdkit.ROMol | None = None, 
-		draw: str | None = '2d', 
+		pose: Mol | AtomGroup, 
+		base: str | Mol | None = None, 
+		draw: str | None | bool = False, 
 		pockets_only: bool = False,
-	) --> set:
+	) -> set:
 
 		"""Return a set of string tags signifying which pockets and optionally 
 		any protein/solvent clashes are relevant to this ligand.
@@ -231,13 +246,16 @@ class PoseButcher:
 
 		See the docstring for PoseButcher.chop() to see information about the other arguments."""
 
-		output = self.chop(pose, draw=draw, base=base, draw=draw, fragments=False)
+		output = self.chop(pose, base=base, draw=draw, fragments=False)
 
 		if pockets_only:
 			return set([d[2] for d in output.values() if d[1] == 'pocket'])
 		else:
 			return set([d[2] if d[1] == 'pocket' else d[1] for d in output.values()])
 		
+	def render(self, hull='hide', **kwargs):
+		self._render_meshes(hull=hull, **kwargs)
+
 	def trim(self):
 		raise NotImplementedError
 
@@ -275,7 +293,7 @@ class PoseButcher:
 			chain = mp.Chain('A')
 			res = mp.Residue('LIG', 1, 1)
 
-			for atom in self.hit_atomgroup.atoms:
+			for atom in self.fragment_atomgroup.atoms:
 				atom.heterogen = False
 				res.add_atom(atom)
 
@@ -323,8 +341,9 @@ class PoseButcher:
 	def protein_hull(self):
 		if self._protein_hull is None:
 			mout.out('Generating protein convex hull..')
-			from .o3d import convex_hull
+			from .o3d import convex_hull, paint
 			mesh = copy.deepcopy(self.protein_mesh['geometry'])
+			paint(mesh, PROTEIN_COLOR)
 			self._protein_hull = {'name':'protein hull', 'geometry':convex_hull(mesh)}
 
 		return self._protein_hull
@@ -341,11 +360,11 @@ class PoseButcher:
 		else:
 			raise NotImplementedError
 
-	def _parse_hits(self, hits):
+	def _parse_fragments(self, fragments):
 		
 		if isinstance(fragments,str) and fragments.endswith('.sdf'):
 			mout.out(f'parsing {mcol.file}{fragments}{mcol.clear} ...', end='')
-			self._fragments_df = PandasTools.LoadSDF(fragments)
+			self._fragment_df = PandasTools.LoadSDF(fragments)
 			mout.out('Done.')
 			return
 		
@@ -520,11 +539,11 @@ class PoseButcher:
 			for k,v in kwargs.items():
 				self._pockets[name][k] = v
 
-	def _classify_atom(self, atom, bolus=True):
+	def _classify_atom(self, atom, fragments=True):
 		
 		from .o3d import is_point_in_mesh
 
-		if bolus and is_point_in_mesh(self.fragment_mesh, atom.position):
+		if fragments and is_point_in_mesh(self.fragment_mesh, atom.position):
 			return ('GOOD','fragment space')
 
 		# protein clash
@@ -542,7 +561,7 @@ class PoseButcher:
 
 		atoms = []
 
-		for name,mol in zip(self.fragment_df['ID'],self.fragment_df['ROMol']):
+		for name,mol in zip(self.fragment_df['ID'], self.fragment_df['ROMol']):
 
 			for atom in mp.rdkit.mol_to_AtomGroup(mol).atoms:
 				atom.residue = name
