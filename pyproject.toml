@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[project]
+name = "PoseButcher"
+version = "0.0.7"
+authors = [
+    { name="Max Winokan", email="max@winokan.com"},
+]
+description = "A tool for categorising and segmenting virtual hits with reference to experimental protein structures and (fragment) hits."
+readme = "README.md"
+requires-python = ">=3.9"
+requires = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "MPyTools >= 0.0.9",
+    "MolParse >= 0.0.6",
+    "ase",
+    "rdkit",
+    "py3Dmol",
+    "IPython",
+    "open3d >= 0.18",
+    "numpy",
+    "jupyterlab",
+    "pandas",
+    "pygamer",
+]
+[project.urls]
+"Homepage" = "https://github.com/mwinokan/PoseButcher"
+"Bug Tracker" = "https://github.com/mwinokan/PoseButcher/issues"
+[tool.hatch.build]
+include = [
+  "posebutcher/*.py",
+]
