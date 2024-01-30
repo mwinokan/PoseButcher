@@ -7,8 +7,10 @@ from molparse import AtomGroup
 from pathlib import Path
 from rdkit.Chem.rdchem import Mol
 
-# console output
-import mout
+# logging
+import mcol
+from mlog import setup_logger
+logger = setup_logger('PoseButcher')
 
 class PoseButcher:
 
@@ -98,7 +100,7 @@ class PoseButcher:
 
 		'''
 
-		mout.debug('PoseButcher')
+		logger.title('Creating PoseButcher')
 
 		self._pockets = {}
 		
@@ -120,6 +122,8 @@ class PoseButcher:
 
 		# define atom clashes with the protein surface:
 		self._protein_clash_function = lambda atom: atom.vdw_radius*0.5
+
+		logger.success('PoseButcher initialised')
 
 	
 	### PUBLIC METHODS
@@ -251,13 +255,20 @@ class PoseButcher:
 		self._render_meshes(hull=hull, **kwargs)
 
 	def trim(self):
-		raise NotImplementedError
+		try: raise NotImplementedError; 
+		except:
+			logger.exception(f"{mcol.func}PoseButcher.trim{mcol.clear} method not implemented ")
 
 	def explore(self):
-		raise NotImplementedError
+		try: raise NotImplementedError; 
+		except:
+			logger.exception(f"{mcol.func}PoseButcher.explore{mcol.clear} method not implemented ")
 
 	def score(self):
-		raise NotImplementedError
+		try: raise NotImplementedError; 
+		except:
+			logger.exception(f"{mcol.func}PoseButcher.score{mcol.clear} method not implemented ")
+
 
 	### PROPERTIES
 
@@ -295,10 +306,12 @@ class PoseButcher:
 			sys.add_chain(chain)
 
 			self._fragment_bolus_path = '_butcher_fragments.pdb'
-			mp.writePDB(self._fragment_bolus_path, sys, shift_name=True)
+			logger.writing(self._fragment_bolus_path)
+			mp.writePDB(self._fragment_bolus_path, sys, shift_name=True, verbosity=0)
 
 			# create the mesh from the PDB
 			from .o3d import mesh_from_pdb, paint
+			logger.warning('excuse the PyGAMer warnings... (they are safe to ignore)')
 			self._fragment_mesh = dict(
 				name='fragments',
 				geometry=mesh_from_pdb(self._fragment_bolus_path, gauss=False).to_legacy()
@@ -311,7 +324,7 @@ class PoseButcher:
 	@property
 	def protein_mesh(self):
 		if self._protein_mesh is None:
-			mout.out('Generating protein mesh...')
+			logger.info('Generating protein mesh...')
 
 			from .o3d import mesh_from_pdb, paint
 			self._protein_mesh = dict(
@@ -334,7 +347,7 @@ class PoseButcher:
 	@property
 	def protein_hull(self):
 		if self._protein_hull is None:
-			mout.out('Generating protein convex hull..')
+			logger.debug('Generating protein convex hull...')
 			from .o3d import convex_hull, paint
 			from copy import deepcopy
 			mesh = deepcopy(self.protein_mesh['geometry'])
@@ -348,9 +361,11 @@ class PoseButcher:
 	def _parse_protein(self, protein):
 		
 		if isinstance(protein,str) or isinstance(protein, Path):
-			self._protein = mp.parse(protein).protein_system
+			logger.reading(protein)
+			self._protein = mp.parse(protein, verbosity=0).protein_system
 			self._apo_protein_path = f'_butcher_protein.pdb'
-			mp.writePDB(self._apo_protein_path, self._protein, shift_name=True)
+			logger.writing(self._apo_protein_path)
+			mp.writePDB(self._apo_protein_path, self._protein, shift_name=True, verbosity=0)
 
 		else:
 			raise NotImplementedError
@@ -358,11 +373,9 @@ class PoseButcher:
 	def _parse_fragments(self, fragments):
 		
 		if isinstance(fragments,str) and fragments.endswith('.sdf'):
-			import mcol
-			mout.out(f'parsing {mcol.file}{fragments}{mcol.clear} ...', end='')
+			logger.reading(fragments)
 			from rdkit.Chem import PandasTools
 			self._fragment_df = PandasTools.LoadSDF(fragments)
-			mout.out('Done.')
 			return
 		
 		elif isinstance(fragments, Path) and fragments.is_dir():
@@ -426,7 +439,7 @@ class PoseButcher:
 			com += array(shift)
 
 		com_str = ', '.join([f'{v:.2f}' for v in com])
-		mout.header(f'Pocket "{name}", radius={r:.2f}, center=[{com_str}]')
+		logger.header(f'Pocket "{name}", radius={r:.2f}, center=[{com_str}]')
 
 		mesh = sphere(r, com)
 
@@ -448,17 +461,18 @@ class PoseButcher:
 		from numpy.linalg import norm
 		from open3d.t.geometry import TriangleMesh
 
-		mout.out('Clipping pockets...')
+		from open3d import utility
+		utility.set_verbosity_level(utility.VerbosityLevel.Error)
+
+		logger.info('Clipping pockets...')
 
 		# clip the pockets to the protein
 		if pockets:
-			mout.out('pocket-pocket intersection...')
+			logger.debug('pocket-pocket intersection...')
 
 			for i,pocket1 in enumerate(self.pocket_meshes):
 
 				for pocket2 in self.pocket_meshes[i+1:]:
-
-					# mout.header(f"{pocket1['name']} {pocket2['name']}")
 
 					center1 = pocket1['geometry'].get_center()
 					center2 = pocket2['geometry'].get_center()
@@ -474,26 +488,22 @@ class PoseButcher:
 						plane_center = (center1 + center2)/2
 					else:
 						x = (distance*distance - pocket2['radius']*pocket2['radius'] + pocket1['radius']*pocket1['radius'])/(2*distance)
-						# mout.var('x',x)
 
 						plane_center = center1 + x / distance * (center2 - center1).numpy()
-					# mout.var('plane_center',plane_center)
 
 					plane_normal = (center1 - center2)
-					# mout.var('plane_normal',plane_normal)
 
 					pocket1['geometry'] = pocket1['geometry'].clip_plane(plane_center, plane_normal)
 
 					pocket2['geometry'] = pocket2['geometry'].clip_plane(plane_center, -plane_normal)
 
-			mout.out('pocket convex hull...')
+			logger.debug('pocket convex hull...')
 			for pocket in self.pocket_meshes:
 				pocket['geometry'] = pocket['geometry'].compute_convex_hull()
-				# pocket = convex_hull(pocket)
 
 		# clip the pockets by their bisector planes
 		if protein:
-			mout.out('clipping pockets (protein)')
+			logger.debug('clipping pockets (protein)')
 			
 			protein = TriangleMesh.from_legacy(self.protein_mesh['geometry'])
 
@@ -502,12 +512,16 @@ class PoseButcher:
 
 		# clip the pockets to the convex hull of the protein
 		if hull:
-			mout.out('clipping pockets (protein hull)')
+			logger.debug('clipping pockets (protein hull)')
 
 			protein = TriangleMesh.from_legacy(self.protein_hull)
 
 			for mesh in self.pocket_meshes:
 				mesh['geometry'] = mesh['geometry'].boolean_intersection(protein)
+
+		logger.success('Pocket clipping complete')
+
+		utility.set_verbosity_level(utility.VerbosityLevel.Warning)
 
 	def _get_protein_atom(self, query: str):
 

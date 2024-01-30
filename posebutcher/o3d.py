@@ -3,6 +3,11 @@ import open3d as o3d
 import mout
 import numpy as np
 
+import mcol
+
+import logging
+logger = logging.getLogger("PoseButcher")
+
 def sphere(radius=1.0, position=None, resolution=20, legacy=False):
 	mesh = o3d.geometry.TriangleMesh.create_sphere(radius, resolution)
 	if position is not None:
@@ -15,8 +20,6 @@ def sphere(radius=1.0, position=None, resolution=20, legacy=False):
 def render(mesh, raw_mode=False, show_ui=True, wireframe=False):
 
 	if wireframe:
-
-		# o3d.visualization.draw_geometries([m['geometry'] for m in mesh], mesh_show_wireframe=True)
 
 		line_sets = []
 
@@ -40,53 +43,6 @@ def render(mesh, raw_mode=False, show_ui=True, wireframe=False):
 			compute_vertex_normals(mesh)
 		
 		o3d.visualization.draw(mesh, raw_mode=raw_mode, show_ui=show_ui)
-
-# def render(meshes):
-
-# 	import open3d.visualization.gui as gui
-# 	import open3d.visualization.rendering as rendering
-# 	import random
-
-# 	gui.Application.instance.initialize()
-
-# 	if not isinstance(meshes,list):
-# 		meshes = [meshes]
-
-# 	window = gui.Application.instance.create_window("PoseButcher", 1024, 768)
-# 	scene = gui.SceneWidget()
-# 	scene.scene = rendering.Open3DScene(window.renderer)
-# 	scene.scene.set_background([1, 1, 1, 1])
-# 	scene.scene.scene.set_sun_light(
-# 		[-1, -1, -1],  # direction
-# 		[1, 1, 1],  # color
-# 		100000)  # intensity
-# 	scene.scene.scene.enable_sun_light(True)
-# 	window.add_child(scene)
-
-# 	for mesh in meshes:
-
-# 		mat = rendering.MaterialRecord()
-# 		mat.base_color = [
-# 			random.random(),
-# 			random.random(),
-# 			random.random(), 1.0
-# 		]
-# 		mat.shader = "defaultLit"
-
-# 		if isinstance(mesh, dict):
-# 			geometry = mesh['geometry']
-# 			name = mesh['name']
-# 		else:
-# 			geometry = mesh
-# 			name = 'mesh'
-
-# 		geometry.compute_vertex_normals()
-		
-# 		scene.scene.add_geometry(name, geometry, mat)
-
-# 	gui.Application.instance.run()
-
-# 	# gui.Application.instance.quit()
 
 def paint(mesh, colour):
 	if isinstance(mesh, dict):
@@ -274,7 +230,7 @@ def mesh_from_pdb(path, gauss=False):
 	import pygamer
 
 	if gauss:
-		mout.out('pygamer.readPDB_gauss...')
+		logger.debug('pygamer.readPDB_gauss...')
 		mesh = pygamer.readPDB_gauss(
 				path, 
 				blobbyness= -0.8,
@@ -282,27 +238,24 @@ def mesh_from_pdb(path, gauss=False):
 			)
 
 	else:
-		mout.out('pygamer.readPDB_molsurf...')
+		logger.debug('pygamer.readPDB_molsurf...')
 		mesh = pygamer.readPDB_molsurf(path)
 
-	mout.out('compute_orientation...')
+	logger.debug('mesh.compute_orientation...')
 	components, orientable, manifold = mesh.compute_orientation()
 	mesh.correctNormals()
-	# print(F"The mesh has {components} components, is"
-	# F" {'orientable' if orientable else 'non-orientable'}, and is"
-	# F" {'manifold' if manifold else 'non-manifold'}.")
 
-	mout.out('creating tensors...')
+	logger.debug('creating tensors...')
 	protverts, protedges, protfaces = mesh.to_ndarray()
 	vertices = o3d.core.Tensor(protverts, dtype=o3d.core.Dtype.Float32)
 	triangles = o3d.core.Tensor(protfaces, dtype=o3d.core.Dtype.Int32)
 
-	mout.out('creating mesh...')
+	logger.debug('creating mesh...')
 	mesh = o3d.t.geometry.TriangleMesh()
 	mesh.vertex.positions = vertices
 	mesh.triangle.indices = triangles
 
-	# mesh.compute_vertex_normals()
+	logger.success(f'Mesh {mcol.file}{path}{mcol.success} complete')
 	return mesh
 
 ####
