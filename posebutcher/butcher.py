@@ -250,25 +250,24 @@ class PoseButcher:
 			return set([d[2] for d in output.values() if d[1] == 'pocket'])
 		else:
 			return set([d[2] if d[1] == 'pocket' else d[1] for d in output.values()])
-		
-	def render(self, hull='hide', **kwargs):
-		self._render_meshes(hull=hull, **kwargs)
-
-	def trim(self):
-		try: raise NotImplementedError; 
-		except:
-			logger.exception(f"{mcol.func}PoseButcher.trim{mcol.clear} method not implemented ")
 
 	def explore(self):
 		try: raise NotImplementedError; 
 		except:
 			logger.exception(f"{mcol.func}PoseButcher.explore{mcol.clear} method not implemented ")
 
+	def trim(self):
+		try: raise NotImplementedError; 
+		except:
+			logger.exception(f"{mcol.func}PoseButcher.trim{mcol.clear} method not implemented ")
+
 	def score(self):
 		try: raise NotImplementedError; 
 		except:
 			logger.exception(f"{mcol.func}PoseButcher.score{mcol.clear} method not implemented ")
 
+	def render(self, hull='hide', **kwargs):
+		self._render_meshes(hull=hull, **kwargs)
 
 	### PROPERTIES
 
