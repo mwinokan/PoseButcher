@@ -58,7 +58,9 @@ Ligand atoms are tagged with categories:
 
 1. Install PoseButcher:
 
-`pip install posebutcher`
+`pip install --upgrade posebutcher`
+
+*N.B. open3d version 0.18 or greater is required*
 
 ## Examples
 
