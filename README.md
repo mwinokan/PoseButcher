@@ -32,13 +32,13 @@ Ligand atoms are tagged with categories:
 
 		tags = butcher.tag(mol)
 
-	4. (Coming soon) Trim a parts of a compound that clash with a protein or leave the crystal
+	4. Explore the expansion opportunities from a given atom in a virtual hit
+
+		result = butcher.explore(mol)
+
+	5. (Coming soon) Trim a parts of a compound that clash with a protein or leave the crystal
 
 		mol = butcher.trim(mol)
-
-	5. (Coming soon) Explore the expansion opportunities from a given atom in a virtual hit
-
-		result = butcher.explore(mol, index, direction)
 
 	6. (Coming soon) Score how well a virtual hit recapitulates shape and colour of the fragment bolus
 
