@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 [project]
 name = "PoseButcher"
-version = "0.0.7"
+version = "0.0.9"
 authors = [
     { name="Max Winokan", email="max@winokan.com"},
 ]
@@ -18,7 +18,7 @@ classifiers = [
 ]
 dependencies = [
     "MPyTools >= 0.0.9",
-    "MolParse >= 0.0.6",
+    "MolParse >= 0.0.8",
     "ase",
     "rdkit",
     "py3Dmol",
