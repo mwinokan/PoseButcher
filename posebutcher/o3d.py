@@ -16,6 +16,79 @@ def sphere(radius=1.0, position=None, resolution=20, legacy=False):
 		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
 	return mesh
 
+def arrow(origin, direction, length, radius=0.5, color=[0,1,0]):
+
+	mesh = o3d.geometry.TriangleMesh.create_arrow(
+		cone_height=3*radius, 
+		cylinder_height=length-3*radius, 
+		cylinder_radius=radius, 
+		cone_radius=1.5*radius,
+	)
+
+	# rotate
+	rotation_matrix = rotation_matrix_from_vectors([0,0,1], direction)
+	mesh.rotate(rotation_matrix, center=[0,0,0])
+
+	# translate
+	mesh.translate(origin)
+
+	mesh.compute_triangle_normals()
+	paint(mesh, color)
+
+	return mesh
+
+def cylinder(origin, direction, length=None, radius=0.25, legacy=False, resolution=20):
+
+	origin = np.array(origin)
+	direction = np.array(direction)
+	# end = np.array(direction)
+
+	# print(origin, direction)
+
+	if length is not None:
+		direction /= np.linalg.norm(direction)
+		end = origin + direction*length
+	else:
+		end = np.array(direction)
+		direction = end - origin
+		length = np.linalg.norm(direction)
+		direction /= length
+
+	mesh = o3d.geometry.TriangleMesh.create_cylinder(
+		radius=radius, 
+		height=length,
+		resolution=resolution,
+	)
+
+	# translate
+	mesh.translate([0,0,length/2])
+
+	# rotate
+	rotation_matrix = rotation_matrix_from_vectors([0,0,1], direction)
+	mesh.rotate(rotation_matrix, center=[0,0,0])
+
+	# translate
+	mesh.translate(origin)
+
+	if not legacy:
+		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+
+	return mesh
+
+def rotation_matrix_from_vectors(vec1, vec2):
+    """ Find the rotation matrix that aligns vec1 to vec2
+    :param vec1: A 3d "source" vector
+    :param vec2: A 3d "destination" vector
+    :return mat: A transform matrix (3x3) which when applied to vec1, aligns it with vec2.
+    """
+    a, b = (vec1 / np.linalg.norm(vec1)).reshape(3), (vec2 / np.linalg.norm(vec2)).reshape(3)
+    v = np.cross(a, b)
+    c = np.dot(a, b)
+    s = np.linalg.norm(v)
+    kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
+    return np.array(rotation_matrix)
+
 # render mesh or list of meshes, or list of dictionaries with keys 'name' and 'geometry'
 def render(mesh, raw_mode=False, show_ui=True, wireframe=False):
 
@@ -36,19 +109,71 @@ def render(mesh, raw_mode=False, show_ui=True, wireframe=False):
 	
 	else:
 		
-		if isinstance(mesh, list):
-			for m in mesh:
-				compute_vertex_normals(m)
-		else:
-			compute_vertex_normals(mesh)
-		
-		o3d.visualization.draw(mesh, raw_mode=raw_mode, show_ui=show_ui)
+		o3d.visualization.draw(mesh, raw_mode=raw_mode, show_ui=show_ui, show_skybox=False)
 
 def paint(mesh, colour):
 	if isinstance(mesh, dict):
 		mesh['geometry'].paint_uniform_color(colour)
 	else:
 		mesh.paint_uniform_color(colour)
+
+def material(color, alpha=1.0, shiny=False):
+
+	mat = o3d.visualization.rendering.MaterialRecord()
+	
+	mat.base_color = [
+		color[0],
+		color[1],
+		color[2],
+		alpha,
+	]
+	
+	
+	if alpha < 1.0:
+		mat.shader = 'defaultLitTransparency'
+		mat.has_alpha = True
+
+		# # non-rough materials are shiny
+		# mat.base_roughness = 0.5
+
+		# # low-reflectance == matte
+		# mat.base_reflectance = 0.2
+		
+		# # # adds specular reflections
+		# # mat.base_clearcoat = 0.1
+
+		# # mat.thickness = 1.0
+		# mat.transmission = 1.0 - alpha
+		# mat.absorption_distance = 10
+		# mat.absorption_color = color
+	
+	else:
+		mat.shader = 'defaultLit'
+
+	if shiny:
+		mat.base_roughness = 0.0
+		mat.base_reflectance = 0.0
+		# mat.base_clearcoat = 1.0 - alpha
+		mat.base_clearcoat = 0.1
+		mat.thickness = 1.0
+		mat.transmission = 1.0 - alpha
+		mat.absorption_distance = 10
+		mat.absorption_color = color
+
+	return mat
+
+def glass():
+	mat = o3d.visualization.rendering.MaterialRecord()
+	mat.shader = 'defaultLitSSR'
+	mat.base_color = [0.467, 0.467, 0.467, 0.2]
+	mat.base_roughness = 0.0
+	mat.base_reflectance = 0.0
+	mat.base_clearcoat = 1.0
+	mat.thickness = 1.0
+	mat.transmission = 1.0
+	mat.absorption_distance = 10
+	mat.absorption_color = [0.5, 0.5, 0.5]
+	return mat
 
 def compute_vertex_normals(mesh):
 	if isinstance(mesh, dict):
@@ -192,16 +317,10 @@ def union_mesh_from_atoms(atoms, skip_hydrogen=True):
 							mout.error('Union has no triangles!')
 
 					except IndexError as e:
-						# render([combined, sphere(r_test, p_test, legacy=False)], wireframe=True)
-						# render([combined], wireframe=True)
-						# render([s], wireframe=False)
 						raise e
 					
 					break
 
-			# if len(used) == 6:
-			# 	left = 0
-			# 	break
 
 			if found:
 				mout.debug(f'Removing {atom}!')
@@ -212,16 +331,82 @@ def union_mesh_from_atoms(atoms, skip_hydrogen=True):
 
 ####
 
-def mesh_from_AtomGroup(group, r_scale=1.0, use_covalent=False):
-	meshes = []
-	for atom in group.atoms:
-		if use_covalent:
-			r = atom.covalent_radius
-		else:
-			r = atom.vdw_radius
-		meshes.append(sphere(r*r_scale, atom.np_pos, legacy=True))
+def mesh_from_AtomGroup(group, r_scale=1.0, use_covalent=False, licorice=True, licorice_radius=0.3):
 
-	combined = combine_many(meshes)
+	if licorice:
+		
+		from ase.data import vdw_radii, atomic_numbers
+		from ase.data.colors import jmol_colors
+
+		# params
+		use_union=False
+		resolution=40
+
+		bond_pairs = group.guess_bonds()
+		atom_positions = group.positions
+
+		meshes = []
+
+		symbols = group.present_symbols
+
+		for symbol in symbols:
+			
+			symbol_meshes = []
+
+			index_atom_dict = {i:a for i,a in enumerate(group.atoms) if a.symbol == symbol}
+
+			atomic_number = atomic_numbers[symbol]
+			color = jmol_colors[atomic_number]
+			color = (color[0],color[1],color[2])
+
+			for index, atom in index_atom_dict.items():
+				
+				atom_meshes = []
+
+				# atom spheres
+				mesh = sphere(licorice_radius, atom.position, legacy=not use_union, resolution=resolution)
+				atom_meshes.append(mesh)
+
+				# bonds
+				bonds = [pair for pair in bond_pairs if index in pair]
+				for i,j in bonds:
+					a = atom_positions[i]
+					b = atom_positions[j]
+					center = (a+b)/2
+					mesh = cylinder(center, atom.position, radius=licorice_radius, legacy=not use_union, resolution=resolution)
+					atom_meshes.append(mesh)
+
+				if use_union:
+					# merge shapes with union
+					combined = atom_meshes[0]
+					for mesh in atom_meshes[1:]:
+						combined = combined.boolean_union(mesh)
+					combined = combined.to_legacy()
+					combined.compute_triangle_normals()
+					paint(combined,color)
+					meshes.append(combined)
+				else:
+					symbol_meshes += atom_meshes
+
+			if not use_union:
+				combined = combine_many(symbol_meshes)
+				combined.compute_triangle_normals()
+				paint(combined,color)
+				meshes.append(dict(geometry=combined,name=f'{group.name} {symbol}'))
+
+		return meshes
+
+	else:
+
+		meshes = []
+		for atom in group.atoms:
+			if use_covalent:
+				r = atom.covalent_radius
+			else:
+				r = atom.vdw_radius
+			meshes.append(sphere(r*r_scale, atom.np_pos, legacy=True))
+
+		combined = combine_many(meshes)
 
 	return {'name':group.name, 'geometry':combined}
 

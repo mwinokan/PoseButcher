@@ -71,6 +71,7 @@ class PoseButcher:
 		protein: str | Path, 
 		fragments: str | Path, 
 		pockets: dict [str, dict] | None = None,
+		pocket_clip: bool = True,
 	) -> None:
 
 		'''Create a Butcher with a protein structure and pocket information
@@ -98,6 +99,8 @@ class PoseButcher:
 				"P1'": dict(type='sphere', atoms=['VAL 84 CG1', 'TYR 90 CD2', 'SER 87 CB'], radius='mean'),
 			}
 
+		pocket_clip: disable this to improve startup performance for debugging. N.B. pockets will overlap with each other and the protein!
+
 		'''
 
 		logger.title('Creating PoseButcher')
@@ -111,6 +114,8 @@ class PoseButcher:
 		self._fragment_df = None  			# pandas.DataFrame
 		self._fragment_atomgroup = None 	# molparse.AtomGroup
 		self._fragment_mesh = None 			# open3d.geometry.TriangleMesh
+
+		self._pocket_clip = pocket_clip
 
 		self._parse_protein(protein)
 		self._parse_fragments(fragments)
@@ -251,10 +256,178 @@ class PoseButcher:
 		else:
 			return set([d[2] if d[1] == 'pocket' else d[1] for d in output.values()])
 
-	def explore(self):
-		try: raise NotImplementedError; 
-		except:
-			logger.exception(f"{mcol.func}PoseButcher.explore{mcol.clear} method not implemented ")
+	def explore(self,
+		pose: Mol | AtomGroup,
+		origin: int | list | None = None,
+		direction: list | None = None,
+		draw: str | bool | None = '3d',
+		return_arrow_mesh: bool = False,
+		color_by_distance: bool = False,
+	):
+
+		"""Explore an expansion vector(s).
+
+		pose: rdkit.Chem.Mol or molparse.AtomGroup of the ligand
+
+		origin: index of the atom from which to expand or None to try all atoms
+
+		direction: direction of the expansion (optional)
+		
+		draw: Currently only '3d' and None/False are supported.
+		
+		return_arrow_mesh: Return open3d TriangleMesh objects for the arrow(s)
+		
+		color_by_distance: Color vectors by their length rather than their destination
+
+		"""
+
+		if isinstance(pose, Mol):
+			mol = pose
+			group = mp.rdkit.mol_to_AtomGroup(pose)
+		else:
+			mol = pose.rdkit_mol
+			group = pose
+
+		if origin is None:
+
+			results = []
+			arrows = []
+
+			for i,_ in enumerate(group.atoms):
+
+				result = dict(atom_index=i)
+
+				this_result, arrow = self.explore(group, origin=i, draw=None, return_arrow_mesh=True)
+
+				if this_result:
+					result |= this_result
+					arrows.append(arrow)
+
+				results.append(result)
+
+			if draw:
+
+				from .o3d import mesh_from_AtomGroup
+				
+				if draw:
+				
+					atoms_mesh = mesh_from_AtomGroup(group, use_covalent=True)
+					
+					if isinstance(atoms_mesh, list):
+						extra = arrows + atoms_mesh
+					else:
+						extra = arrows + [atoms_mesh]
+
+					self.render(extra=extra, pockets='hide', fragments='hide')
+
+			return results
+
+		else:
+
+			if isinstance(origin, int):
+				orig_index = origin
+				orig_atom = group.atoms[origin]
+				origin = orig_atom.position
+			else:
+				orig_index = None
+				orig_atom = None
+
+			import numpy as np
+			origin = np.array(origin)
+
+			# guess the direction from nearby atoms
+			if not direction:
+
+				assert orig_index is not None
+
+				bonds = [pair for pair in group.guess_bonds() if orig_index in pair]
+				bonded_atom_indices = {i for i in sum(bonds,[]) if i != orig_index}
+
+				if len(bonded_atom_indices) > 2:
+					
+					logger.warning(f'Skipping vector from atom with more than two bonds. i={orig_index}')
+
+					if return_arrow_mesh:
+						return None, None
+					else:
+						return None
+
+				nearby_atom_center = sum([group.atoms[i].np_pos for i in bonded_atom_indices])
+				nearby_atom_center /= len(bonded_atom_indices)
+
+				direction = origin - nearby_atom_center
+
+			direction = np.array(direction, dtype=np.float64)
+			direction /= np.linalg.norm(direction)
+
+			result = self._classify_vector(origin, direction, fragments=False)
+
+			if not result:
+				if return_arrow_mesh:
+					return None, None
+				else:
+					return None
+
+			### visualise
+			if draw or return_arrow_mesh:
+
+				from .o3d import arrow, mesh_from_AtomGroup
+
+				first_intersection = min(result['intersections'])
+				dist_to_clash = max(result['intersections'])
+				
+				detail_str = f'{orig_atom} [i={orig_index}]' if orig_index else origin
+
+				if color_by_distance:
+
+					if dist_to_clash <= CC_DIST + C_VDW_RADIUS/2: # one heavy atom
+						color = [1,0,0]
+
+					elif dist_to_clash <= 1.5*CC_DIST + C_VDW_RADIUS/2: # three heavy atoms
+						color = [1,0.5,0]
+
+					elif dist_to_clash <= 2.5*CC_DIST + C_VDW_RADIUS/2: # almost whole ring
+						color = [1,1,0]
+
+					elif dist_to_clash <= 3.0*CC_DIST + C_VDW_RADIUS/2: # whole ring
+						color = [0.5,1,0]
+
+					else: # more heavy atoms
+						color = [0,1,0]
+
+				else:
+
+					# color by clash/destination
+
+					if result['intersections'][dist_to_clash][1] == 'solvent space':
+						color = [0,0,1]
+
+					elif result['intersections'][first_intersection][1] == 'pocket':
+						color = [0,1,0]
+
+					elif result['intersections'][dist_to_clash][1] == 'protein clash':
+						color = [1,0,0]
+
+					else:
+						color = [0,0,0]
+
+				arrow_mesh = dict(geometry=arrow(origin, direction, length=dist_to_clash, radius=0.2, color=color), name=f'Vector {detail_str}')
+				
+				if draw:
+				
+					atoms_mesh = mesh_from_AtomGroup(group, use_covalent=True)
+					
+					if isinstance(atoms_mesh, list):
+						extra = [arrow_mesh] + atoms_mesh
+					else:
+						extra = [arrow_mesh, atoms_mesh]
+
+					self.render(extra=extra, pockets='hide', fragments='hide')
+
+			if return_arrow_mesh:
+				return result, arrow_mesh
+			else:
+				return result
 
 	def trim(self):
 		try: raise NotImplementedError; 
@@ -309,14 +482,16 @@ class PoseButcher:
 			mp.writePDB(self._fragment_bolus_path, sys, shift_name=True, verbosity=0)
 
 			# create the mesh from the PDB
-			from .o3d import mesh_from_pdb, paint
+			from .o3d import mesh_from_pdb, material
 			logger.warning('excuse the PyGAMer warnings... (they are safe to ignore)')
+			mesh = mesh_from_pdb(self._fragment_bolus_path, gauss=False).to_legacy()
+			mesh.compute_vertex_normals()
+			mat = material(FRAGMENT_COLOR, alpha=1.0)
 			self._fragment_mesh = dict(
 				name='fragments',
-				geometry=mesh_from_pdb(self._fragment_bolus_path, gauss=False).to_legacy()
-			)
-			
-			paint(self._fragment_mesh, FRAGMENT_COLOR)
+				geometry=mesh,
+				material=mat,
+			)			
 
 		return self._fragment_mesh
 
@@ -325,14 +500,18 @@ class PoseButcher:
 		if self._protein_mesh is None:
 			logger.info('Generating protein mesh...')
 
-			from .o3d import mesh_from_pdb, paint
+			from .o3d import mesh_from_pdb, material
+			
+			mesh = mesh_from_pdb(self._apo_protein_path).to_legacy()
+
+			mesh.compute_vertex_normals()
+
 			self._protein_mesh = dict(
 				name='protein',
-				geometry=mesh_from_pdb(self._apo_protein_path).to_legacy()
+				geometry=mesh,
+				material=material(PROTEIN_COLOR, alpha=1.0),
 			)
 			
-			paint(self._protein_mesh, PROTEIN_COLOR)
-
 		return self._protein_mesh
 
 	@property
@@ -347,11 +526,16 @@ class PoseButcher:
 	def protein_hull(self):
 		if self._protein_hull is None:
 			logger.debug('Generating protein convex hull...')
-			from .o3d import convex_hull, paint
+			from .o3d import convex_hull, material
 			from copy import deepcopy
 			mesh = deepcopy(self.protein_mesh['geometry'])
-			paint(mesh, PROTEIN_COLOR)
-			self._protein_hull = {'name':'protein hull', 'geometry':convex_hull(mesh)}
+			mesh = convex_hull(mesh)
+			mesh.compute_vertex_normals()
+			self._protein_hull = dict(
+				name = 'protein hull', 
+				geometry = mesh,
+				material = material(PROTEIN_COLOR, alpha=1.0, shiny=False),
+			)
 
 		return self._protein_hull
 	
@@ -406,12 +590,13 @@ class PoseButcher:
 
 			self._spherical_pocket_from_atoms(name, atoms, center=center, radius=radius, shift=shift)
 
-		self._clip_pockets()
+		if self._pocket_clip:
+			self._clip_pockets()
 
-	def _spherical_pocket_from_atoms(self, name, atoms, center=None, radius='mean', shift=None, subtract_protein=False):
+	def _spherical_pocket_from_atoms(self, name, atoms, center=None, radius='mean', shift=None):
 
 		import random
-		from .o3d import sphere #, subtract_atoms
+		from .o3d import sphere, material, glass#, subtract_atoms
 
 		# sphere centred between given atoms
 
@@ -442,18 +627,14 @@ class PoseButcher:
 
 		mesh = sphere(r, com)
 
-		from open3d.visualization.rendering import MaterialRecord
-		mat = MaterialRecord()
 		color = POCKET_COLORS[len(self.pocket_meshes)]
-		mat.base_color = [
-			color[0],
-			color[1],
-			color[2],
-			0.5,
-		]
-		mat.shader = "defaultLit"
+		mat = material(color, alpha=0.7)
+		# mat = glass()
 
-		self._new_pocket(name, mesh, mat, radius=r, color=color)
+		# mesh.compute_triangle_normals()
+		mesh.compute_vertex_normals()
+
+		self._new_pocket(name, mesh, mat, radius=r)
 
 	def _clip_pockets(self, protein=True, pockets=True, hull=False, pocket_bisector=False):
 		
@@ -552,22 +733,128 @@ class PoseButcher:
 				self._pockets[name][k] = v
 
 	def _classify_atom(self, atom, fragments=True):
+		clash_radius = self._protein_clash_function(atom)
+		return self._classify_position(atom.position, fragments, clash_radius=clash_radius)
+
+	def _classify_position(self, position, fragments=True, clash_radius=0.0):
 		
 		from .o3d import is_point_in_mesh
 
-		if fragments and is_point_in_mesh(self.fragment_mesh, atom.position):
+		if fragments and is_point_in_mesh(self.fragment_mesh, position):
 			return ('GOOD','fragment space')
 
 		# protein clash
-		if is_point_in_mesh(self.protein_mesh, atom.position, within=self._protein_clash_function(atom)):
+		if is_point_in_mesh(self.protein_mesh, position, within=clash_radius):
 			return ('BAD','protein clash')
 
 		# pockets
 		for p_name, p_mesh in self.pockets.items():
-			if is_point_in_mesh(p_mesh, atom.position):
+			if is_point_in_mesh(p_mesh, position):
 				return ('GOOD', 'pocket', p_name)
 
 		return ('BAD','solvent space')
+
+	def _classify_vector(self, origin, direction, fragments=False):
+
+		# logger.debug(f"butcher._classify_vector({origin=}, {direction=})")
+
+		d = 0.0
+
+		from numpy.linalg import norm
+		
+		direction /= norm(direction)
+
+		origin_info = self._classify_position(origin, fragments=fragments)
+		# logger.info(f'origin: {origin_info}')
+
+		skip_pockets = []
+		if origin_info[1] == 'protein clash':
+			logger.error('Vector begins within protein volume')
+			return None
+		elif origin_info[1] == 'pocket':
+			skip_pockets.append(origin_info[2])
+
+		complete = False
+
+		result = dict(origin=origin_info, intersections={})
+
+		while not complete:
+
+			id_lookup, ans = self._cast_ray(origin, direction, skip_pockets)
+
+			hit_distance = ans['t_hit'][0]
+			
+			from numpy import inf
+			if hit_distance == inf:
+				logger.error('NO HIT')
+
+			else:
+
+				geo_id = ans['geometry_ids'].numpy()[0]
+				object_name = id_lookup[geo_id]
+
+				hit_distance = round(float(hit_distance.numpy()),3)
+				
+				# logger.debug(f'HIT {object_name} @ {hit_distance:.2f} Å')
+
+				match object_name:
+					case 'hull':
+						# logger.debug('Vector is leaving the protein (solvent)')
+						complete = True
+						result['intersections'][hit_distance] = ('BAD', 'solvent space')
+
+					case 'protein':
+						# logger.debug('Vector is approaching a protein clash')
+						complete = True
+						result['intersections'][hit_distance] = ('BAD', 'protein clash')
+
+					case _:
+						# logger.debug(f'Vector is approaching {object_name}')
+						pocket_name = object_name.split()[-1]
+						skip_pockets.append(pocket_name)
+						result['intersections'][hit_distance] = ('GOOD', 'pocket', pocket_name)
+
+		result['first_intersection_distance'] = min(result['intersections'])
+		result['new_pocket'] = 'pocket' in result['intersections'][result['first_intersection_distance']]
+		result['last_intersection_distance'] = max(result['intersections'])
+		result['destination'] = result['intersections'][result['last_intersection_distance']][1]
+		result['max_atoms_added'] = self._num_heavy_atoms_from_distance(result['last_intersection_distance'])
+
+		if result['last_intersection_distance'] < CC_DIST:
+			logger.error('Vector ends within carbon-carbon bond distance')
+			return None
+
+		return result
+
+	def _cast_ray(self, origin, direction, skip_pockets):
+
+		# create a ray casting scene
+		from open3d.t.geometry import RaycastingScene, TriangleMesh
+		scene = RaycastingScene()
+
+		# populate the ray casting scene
+		id_lookup = {}
+
+		geo_id = scene.add_triangles(TriangleMesh.from_legacy(self.protein_mesh['geometry']))
+		id_lookup[geo_id] = 'protein'
+
+		geo_id = scene.add_triangles(TriangleMesh.from_legacy(self.protein_hull['geometry']))
+		id_lookup[geo_id] = 'hull'
+		
+		for pocket in self.pocket_meshes:
+
+			# skip starting pocket
+			if pocket['name'] in skip_pockets:
+				continue
+
+			geo_id = scene.add_triangles(pocket['geometry'])
+			id_lookup[geo_id] = f"pocket {pocket['name']}"
+
+		# cast the ray
+		from open3d.core import Tensor, Dtype
+		rays = Tensor([[*origin, *direction]], dtype=Dtype.Float32)
+
+		return id_lookup, scene.cast_rays(rays)
 
 	def _build_fragment_bolus(self):
 
@@ -628,13 +915,14 @@ class PoseButcher:
 
 		render(meshes, wireframe=wireframe)
 
-	def _output_to_color_pairs(self,output):
+	def _output_to_color_pairs(self, output):
 
 		pairs = []
 		for k,v in output.items():
 
 			if v[1] == 'pocket':
-				c = self.pockets[v[2]]['color']
+				c = self.pockets[v[2]]['material'].base_color
+				c = tuple([float(x) for x in c[:3]])
 
 			elif v[1] == 'protein clash':
 				c = PROTEIN_COLOR
@@ -651,6 +939,25 @@ class PoseButcher:
 			pairs.append((k,c))
 
 		return pairs
+
+	def _num_heavy_atoms_from_distance(self, distance):
+
+		from numpy import inf
+
+		if distance <= CC_DIST + C_VDW_RADIUS/2:
+			return 1
+
+		elif distance <= 1.5*CC_DIST + C_VDW_RADIUS/2:
+			return 3
+
+		elif distance <= 2.5*CC_DIST + C_VDW_RADIUS/2:
+			return 7
+
+		elif distance <= 3.0*CC_DIST + C_VDW_RADIUS/2:
+			return 14
+
+		else:
+			return inf
 
 def output_to_label(output, index):
 
@@ -684,3 +991,6 @@ POCKET_COLORS = [
     (1.0, 0.4980392156862745, 0.054901960784313725), 				# 'tab:orange'
     (0.8392156862745098, 0.15294117647058825, 0.1568627450980392),  # 'tab:red'
 ]
+
+CC_DIST = 1.54
+C_VDW_RADIUS = 1.7
