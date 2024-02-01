@@ -1,7 +1,7 @@
 
 # PoseButcher
 
-"A good butcher always trims the fat"
+> "A good butcher always trims the fat"
 
 PoseButcher is a tool for categorising and segmenting virtual hits with reference to experimental protein structures and (fragment) hits.
 
@@ -46,13 +46,17 @@ Ligand atoms are tagged with categories:
 
 ## Sample output
 
-### Protein, fragment bolus, and catalytic pockets with Open3D:
+### Protein, ligand, and catalytic site pockets with Open3D:
 
-![butcher_3d](https://github.com/mwinokan/PoseButcher/assets/36866506/5162fa10-8003-4980-aa08-0cbc0d38a0f5)
+![butcher_3d](https://github.com/mwinokan/PoseButcher/assets/36866506/19c7895d-328b-4bdb-aca1-539f59fbea28)
 
 ### A chopped up ligand:
 
 ![butcher_2d](https://github.com/mwinokan/PoseButcher/assets/36866506/f4947703-83f9-45f5-8e70-108918582938)
+
+### Exploring expansion vector into a desirable pocket
+
+![butcher_vector](https://github.com/mwinokan/PoseButcher/assets/36866506/af34e286-3dfe-4f5a-871e-ff8d28292a3d)
 
 ## Installation
 
