@@ -263,6 +263,11 @@ class PoseButcher:
 		draw: str | bool | None = '3d',
 		return_arrow_mesh: bool = False,
 		color_by_distance: bool = False,
+		samples: bool = False,
+		sample_angle_max: float = 10,
+		sample_angle_step: float = 2,
+		sample_choose_best: bool = True,
+		warnings: bool = True,
 	):
 
 		"""Explore an expansion vector(s).
@@ -278,6 +283,16 @@ class PoseButcher:
 		return_arrow_mesh: Return open3d TriangleMesh objects for the arrow(s)
 		
 		color_by_distance: Color vectors by their length rather than their destination
+		
+		samples: Perform additional samples around the (guessed) direction
+
+		sample_angle_max: Maximal angle of additional samples
+
+		sample_angle_step: Angle distance between additional samples
+		
+		sample_choose_best: Return the best sample vector only
+		
+		warnings: Set False to silence warnings
 
 		"""
 
@@ -292,18 +307,34 @@ class PoseButcher:
 
 			results = []
 			arrows = []
+			
+			if not sample_choose_best:
+				logger.warning('Setting sample_choose_best option to True when sampling every atom')
 
 			for i,_ in enumerate(group.atoms):
 
 				result = dict(atom_index=i)
 
-				this_result, arrow = self.explore(group, origin=i, draw=None, return_arrow_mesh=True)
+				this_result, arrow = self.explore(group, 
+					origin=i, 
+					draw=None, 
+					return_arrow_mesh=True, 
+					samples=samples, 
+					sample_angle_step=sample_angle_step, 
+					sample_angle_max=sample_angle_max, 
+					sample_choose_best=True,
+				)
 
-				if this_result:
+				# print(this_result)
+
+				if this_result['success']:
 					result |= this_result
 					arrows.append(arrow)
 
 				results.append(result)
+
+			if samples:
+				logger.success('Vector sampling complete')
 
 			if draw:
 
@@ -322,6 +353,109 @@ class PoseButcher:
 
 			return results
 
+		elif samples:
+
+			# perform multiple vector explorations and return the 'best' one
+			logger.debug(f'Sampling {origin=} ...')
+
+			results = []
+
+			# guess the direction
+			if not direction:
+				direction = self._guess_vector_direction(origin, group, warnings=False)
+
+			if direction is None:
+				logger.warning(f'No successful vectors found for {origin=} (#bonds>2)')
+				if return_arrow_mesh:
+					return dict(success=False), None
+				else:
+					return dict(success=False)
+
+			# create unit vectors perpendicular to the direction vector
+			from .o3d import rotation_matrix_from_vectors
+			from numpy import array, matmul, dot, tan
+			rotation_matrix = rotation_matrix_from_vectors([0,0,1], direction)
+			unit1 = matmul(rotation_matrix,array([1,0,0]))
+			unit2 = matmul(rotation_matrix,array([0,1,0]))
+
+			# first result along guessed direction
+			result = self.explore(
+				group, origin=origin, direction=direction, 
+				draw=None, return_arrow_mesh=False, samples=False)
+			result['sample_shift_x'] = 0
+			result['sample_shift_y'] = 0
+			results.append(result)
+
+			# more results along shifted directions
+			sample_coords = circular_samples(sample_angle_max, sample_angle_step)
+
+			for i,(x,y) in enumerate(sample_coords):
+				# if i%25 == 0:
+				# 	logger.debug(f'Sampling {i=}/{len(sample_coords)}')
+				new_direction = direction + x*unit1 + y*unit2
+				result = self.explore(
+					group, origin=origin, direction=new_direction, 
+					draw=None, return_arrow_mesh=False, samples=False, warnings=False)
+				result['sample_shift_x'] = x
+				result['sample_shift_y'] = y
+				results.append(result)
+
+			# pick the best one
+			sorted_results = sorted([r for r in results if r['success']], key=lambda x: x['last_intersection_distance'], reverse=True)
+			if sorted_results:
+				result = sorted_results[0]
+			else:
+				result = dict(success=False)
+
+			if not result['success']:
+				logger.warning(f'No successful vectors found for {origin=}')
+
+			### visualise
+			if draw or return_arrow_mesh:
+
+				from .o3d import mesh_from_AtomGroup
+
+				if isinstance(origin, int):
+					orig_index = origin
+					orig_atom = group.atoms[origin]
+					origin = orig_atom.position
+				else:
+					orig_index = None
+					orig_atom = None
+				
+				if result['success']:
+					arrow_mesh = create_arrow_mesh(orig_atom, orig_index, origin, color_by_distance, result)
+				else:
+					arrow_mesh = None
+
+				if draw:
+				
+					atoms_mesh = mesh_from_AtomGroup(group, use_covalent=True)
+					
+					if arrow_mesh is None:
+						if isinstance(atoms_mesh, list):
+							extra = atoms_mesh
+						else:
+							extra = [atoms_mesh]
+					else:
+						if isinstance(atoms_mesh, list):
+							extra = [arrow_mesh] + atoms_mesh
+						else:
+							extra = [arrow_mesh, atoms_mesh]
+
+					self.render(extra=extra, pockets='hide', fragments='hide')
+
+			if return_arrow_mesh:
+				if sample_choose_best:
+					return result, arrow_mesh
+				else:
+					return results, arrow_mesh
+			else:
+				if sample_choose_best:
+					return result
+				else:
+					return results
+
 		else:
 
 			if isinstance(origin, int):
@@ -336,82 +470,35 @@ class PoseButcher:
 			origin = np.array(origin)
 
 			# guess the direction from nearby atoms
-			if not direction:
+			if direction is None:
+				direction = self._guess_vector_direction(orig_index, group, warnings=False)
 
-				assert orig_index is not None
-
-				bonds = [pair for pair in group.guess_bonds() if orig_index in pair]
-				bonded_atom_indices = {i for i in sum(bonds,[]) if i != orig_index}
-
-				if len(bonded_atom_indices) > 2:
-					
-					logger.warning(f'Skipping vector from atom with more than two bonds. i={orig_index}')
-
+				if direction is None:
 					if return_arrow_mesh:
-						return None, None
+						return dict(success=False), None
 					else:
-						return None
+						return dict(success=False)
 
-				nearby_atom_center = sum([group.atoms[i].np_pos for i in bonded_atom_indices])
-				nearby_atom_center /= len(bonded_atom_indices)
-
-				direction = origin - nearby_atom_center
+			assert len(direction) == 3
 
 			direction = np.array(direction, dtype=np.float64)
 			direction /= np.linalg.norm(direction)
+			
 
-			result = self._classify_vector(origin, direction, fragments=False)
+			result = self._classify_vector(origin, direction, fragments=False, warnings=False)
 
-			if not result:
+			if not result['success']:
 				if return_arrow_mesh:
-					return None, None
+					return result, None
 				else:
-					return None
+					return result
 
 			### visualise
 			if draw or return_arrow_mesh:
 
-				from .o3d import arrow, mesh_from_AtomGroup
-
-				first_intersection = min(result['intersections'])
-				dist_to_clash = max(result['intersections'])
+				from .o3d import mesh_from_AtomGroup
 				
-				detail_str = f'{orig_atom} [i={orig_index}]' if orig_index else origin
-
-				if color_by_distance:
-
-					if dist_to_clash <= CC_DIST + C_VDW_RADIUS/2: # one heavy atom
-						color = [1,0,0]
-
-					elif dist_to_clash <= 1.5*CC_DIST + C_VDW_RADIUS/2: # three heavy atoms
-						color = [1,0.5,0]
-
-					elif dist_to_clash <= 2.5*CC_DIST + C_VDW_RADIUS/2: # almost whole ring
-						color = [1,1,0]
-
-					elif dist_to_clash <= 3.0*CC_DIST + C_VDW_RADIUS/2: # whole ring
-						color = [0.5,1,0]
-
-					else: # more heavy atoms
-						color = [0,1,0]
-
-				else:
-
-					# color by clash/destination
-
-					if result['intersections'][dist_to_clash][1] == 'solvent space':
-						color = [0,0,1]
-
-					elif result['intersections'][first_intersection][1] == 'pocket':
-						color = [0,1,0]
-
-					elif result['intersections'][dist_to_clash][1] == 'protein clash':
-						color = [1,0,0]
-
-					else:
-						color = [0,0,0]
-
-				arrow_mesh = dict(geometry=arrow(origin, direction, length=dist_to_clash, radius=0.2, color=color), name=f'Vector {detail_str}')
+				arrow_mesh = create_arrow_mesh(orig_atom, orig_index, origin, color_by_distance, result)
 				
 				if draw:
 				
@@ -754,7 +841,7 @@ class PoseButcher:
 
 		return ('BAD','solvent space')
 
-	def _classify_vector(self, origin, direction, fragments=False):
+	def _classify_vector(self, origin, direction, fragments=False, warnings=True):
 
 		# logger.debug(f"butcher._classify_vector({origin=}, {direction=})")
 
@@ -767,16 +854,20 @@ class PoseButcher:
 		origin_info = self._classify_position(origin, fragments=fragments)
 		# logger.info(f'origin: {origin_info}')
 
+		result = dict(origin=origin_info, direction=direction)
+
 		skip_pockets = []
 		if origin_info[1] == 'protein clash':
-			logger.error('Vector begins within protein volume')
-			return None
+			if warnings:
+				logger.warning('Skipping vector that begins within protein volume')
+			result['success'] = False
+			return result
 		elif origin_info[1] == 'pocket':
 			skip_pockets.append(origin_info[2])
 
 		complete = False
 
-		result = dict(origin=origin_info, intersections={})
+		result['intersections'] = {}
 
 		while not complete:
 
@@ -795,21 +886,16 @@ class PoseButcher:
 
 				hit_distance = round(float(hit_distance.numpy()),3)
 				
-				# logger.debug(f'HIT {object_name} @ {hit_distance:.2f} Å')
-
 				match object_name:
 					case 'hull':
-						# logger.debug('Vector is leaving the protein (solvent)')
 						complete = True
 						result['intersections'][hit_distance] = ('BAD', 'solvent space')
 
 					case 'protein':
-						# logger.debug('Vector is approaching a protein clash')
 						complete = True
 						result['intersections'][hit_distance] = ('BAD', 'protein clash')
 
 					case _:
-						# logger.debug(f'Vector is approaching {object_name}')
 						pocket_name = object_name.split()[-1]
 						skip_pockets.append(pocket_name)
 						result['intersections'][hit_distance] = ('GOOD', 'pocket', pocket_name)
@@ -821,8 +907,12 @@ class PoseButcher:
 		result['max_atoms_added'] = self._num_heavy_atoms_from_distance(result['last_intersection_distance'])
 
 		if result['last_intersection_distance'] < CC_DIST:
-			logger.error('Vector ends within carbon-carbon bond distance')
-			return None
+			if warnings:
+				logger.warning('Vector ends within carbon-carbon bond distance')
+			result['success'] = False
+			return result
+
+		result['success'] = True
 
 		return result
 
@@ -852,7 +942,13 @@ class PoseButcher:
 
 		# cast the ray
 		from open3d.core import Tensor, Dtype
-		rays = Tensor([[*origin, *direction]], dtype=Dtype.Float32)
+		try:
+			rays = Tensor([[*origin, *direction]], dtype=Dtype.Float32)
+		except ValueError:
+			logger.error(f'{origin=}')
+			logger.error(f'{direction=}')
+			logger.error(f'{[[*origin, *direction]]=}')
+			raise
 
 		return id_lookup, scene.cast_rays(rays)
 
@@ -959,6 +1055,27 @@ class PoseButcher:
 		else:
 			return inf
 
+	def _guess_vector_direction(self, orig_index, group, warnings=True):
+
+		assert orig_index is not None
+
+
+		bonds = [pair for pair in group.guess_bonds() if orig_index in pair]
+		bonded_atom_indices = {i for i in sum(bonds,[]) if i != orig_index}
+
+		if len(bonded_atom_indices) > 2:
+			if warnings:
+				logger.warning(f'Skipping vector from atom with more than two bonds. i={orig_index}')
+			return None
+
+		nearby_atom_center = sum([group.atoms[i].np_pos for i in bonded_atom_indices])
+		nearby_atom_center /= len(bonded_atom_indices)
+
+		origin = group.atoms[orig_index].np_pos
+		direction = origin - nearby_atom_center
+
+		return direction
+
 def output_to_label(output, index):
 
 	output_tuple = output[index]
@@ -973,7 +1090,73 @@ def output_to_label(output, index):
 		return 'PROT.'
 
 	return ''
+
+def circular_samples(theta_max, theta_step):
+	import numpy as np
+
+	def radians(x):
+		return np.pi*x/180
+	
+	coords = []
+	for theta in np.arange(theta_step,theta_max+theta_step,theta_step):
+
+		r = np.tan(radians(theta))
+		c = 2 * np.pi * r
+		N = round(c/np.tan(radians(theta_step)))
+		phi_step = 360/N
+
+		for phi in np.arange(0, 360, phi_step):
+			x = r*np.cos(radians(phi))
+			y = r*np.sin(radians(phi))
+			coords.append([x,y])
+
+	return coords
     
+def create_arrow_mesh(orig_atom, orig_index, origin, color_by_distance, result):
+
+	from .o3d import arrow
+
+	direction = result['direction']
+	dist_to_clash = result['last_intersection_distance']
+	first_intersection = result['first_intersection_distance']
+
+	detail_str = f'{orig_atom} [i={orig_index}]' if orig_index else origin
+
+	if color_by_distance:
+
+		if dist_to_clash <= CC_DIST + C_VDW_RADIUS/2: # one heavy atom
+			color = [1,0,0]
+
+		elif dist_to_clash <= 1.5*CC_DIST + C_VDW_RADIUS/2: # three heavy atoms
+			color = [1,0.5,0]
+
+		elif dist_to_clash <= 2.5*CC_DIST + C_VDW_RADIUS/2: # almost whole ring
+			color = [1,1,0]
+
+		elif dist_to_clash <= 3.0*CC_DIST + C_VDW_RADIUS/2: # whole ring
+			color = [0.5,1,0]
+
+		else: # more heavy atoms
+			color = [0,1,0]
+
+	else:
+
+		# color by clash/destination
+
+		if result['intersections'][first_intersection][1] == 'pocket':
+			color = [0,1,0]
+
+		elif result['intersections'][dist_to_clash][1] == 'solvent space':
+			color = [0,0,1]
+
+		elif result['intersections'][dist_to_clash][1] == 'protein clash':
+			color = [1,0,0]
+
+		else:
+			color = [0,0,0]
+
+	return dict(geometry=arrow(origin, direction, length=dist_to_clash, radius=0.2, color=color), name=f'Vector {detail_str}')
+
 PROTEIN_COLOR = (0.8392156862745098, 0.15294117647058825, 0.1568627450980392)  # 'tab:red'
 SOLVENT_COLOR = (0.12156862745098039, 0.4666666666666667, 0.7058823529411765)  # 'tab:blue'
 FRAGMENT_COLOR = (1.0, 0.4980392156862745, 0.054901960784313725) 			   # 'tab:orange'
