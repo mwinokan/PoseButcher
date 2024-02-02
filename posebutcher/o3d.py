@@ -75,6 +75,34 @@ def cylinder(origin, direction, length=None, radius=0.25, legacy=False, resoluti
 
 	return mesh
 
+def cone(origin, direction, half_angle, length, resolution=30, legacy=False):
+
+	origin = np.array(origin, dtype=float)
+	direction = np.array(direction, dtype=float)
+	direction /= np.linalg.norm(direction)
+
+	radius = np.tan(half_angle*np.pi/180)*length
+
+	mesh = o3d.geometry.TriangleMesh.create_cone(radius, length, resolution=resolution)
+
+	# translate
+	mesh.translate([0,0,-length])
+
+
+	# rotate
+	rotation_matrix = rotation_matrix_from_vectors([0,0,-1], direction)
+	mesh.rotate(rotation_matrix, center=[0,0,0])
+
+	# translate
+	mesh.translate(origin)
+
+	mesh.compute_triangle_normals()
+
+	if not legacy:
+		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+
+	return dict(geometry=mesh, name='cone')
+
 def rotation_matrix_from_vectors(vec1, vec2):
     """ Find the rotation matrix that aligns vec1 to vec2
     :param vec1: A 3d "source" vector
@@ -249,6 +277,40 @@ def subtract_atoms(mesh, group, r_scale=1.0, use_covalent=False):
 
 	return mesh
 
+def mesh_fix(
+	mesh, 
+	sample_points=2000, 
+	nbr_sz=20, 
+	sample_spacing=None, 
+	temp_path='_meshfix.ply',
+	clip_to_hull=False,
+):
+
+	import pymeshfix
+	import pyvista as pv
+
+	if hasattr(mesh, 'to_legacy'):
+		mesh = mesh.to_legacy()
+
+	pcd = mesh.sample_points_uniformly(number_of_points=sample_points)
+
+	point_cloud = pv.PolyData(np.asarray(pcd.points))
+	surf = point_cloud.reconstruct_surface(nbr_sz=nbr_sz, sample_spacing=sample_spacing)
+
+	mf = pymeshfix.MeshFix(surf)
+	mf.repair()
+	repaired = mf.mesh
+	logger.writing(temp_path)
+	mf.save(temp_path)
+
+	logger.reading(temp_path)
+	fixed = o3d.io.read_triangle_mesh(temp_path)
+
+	if clip_to_hull:
+		clipped = o3d.t.geometry.TriangleMesh.from_legacy(fixed).boolean_intersection(o3d.t.geometry.TriangleMesh.from_legacy(convex_hull(mesh)))
+		return clipped
+
+	return fixed
 
 ### THIS IS NOT WORKING RELIABLY
 def union_mesh_from_atoms(atoms, skip_hydrogen=True):

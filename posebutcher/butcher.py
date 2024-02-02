@@ -268,7 +268,7 @@ class PoseButcher:
 		sample_angle_step: float = 2,
 		sample_choose_best: bool = True,
 		warnings: bool = True,
-	):
+	) -> dict | list [dict]:
 
 		"""Explore an expansion vector(s).
 
@@ -361,7 +361,7 @@ class PoseButcher:
 			results = []
 
 			# guess the direction
-			if not direction:
+			if direction is None:
 				direction = self._guess_vector_direction(origin, group, warnings=False)
 
 			if direction is None:
@@ -471,7 +471,7 @@ class PoseButcher:
 
 			# guess the direction from nearby atoms
 			if direction is None:
-				direction = self._guess_vector_direction(orig_index, group, warnings=False)
+				direction = self._guess_vector_direction(orig_index, group, warnings=warnings)
 
 				if direction is None:
 					if return_arrow_mesh:
@@ -485,7 +485,7 @@ class PoseButcher:
 			direction /= np.linalg.norm(direction)
 			
 
-			result = self._classify_vector(origin, direction, fragments=False, warnings=False)
+			result = self._classify_vector(origin, direction, fragments=False, warnings=warnings)
 
 			if not result['success']:
 				if return_arrow_mesh:
@@ -515,6 +515,203 @@ class PoseButcher:
 				return result, arrow_mesh
 			else:
 				return result
+
+	def cavity(self,
+		pose: Mol | AtomGroup,
+		origin: int | None = None,
+		direction: list | None = None,
+		cone_half_angle: float = 10,
+		sample_angle_max: float | None = None,
+		sample_angle_step: float = 5,
+		align_to_sampled: bool = True,
+		draw: str | bool | None = '3d',
+	):
+
+		# parse pose argument
+		if isinstance(pose, Mol):
+			mol = pose
+			group = mp.rdkit.mol_to_AtomGroup(pose)
+		else:
+			mol = pose.rdkit_mol
+			group = pose
+
+		if not sample_angle_max:
+			sample_angle_max=cone_half_angle
+
+		if origin is None:
+
+			# loop over all atoms
+
+			results = []
+
+			for i,_ in enumerate(group.atoms):
+
+				result = self.cavity(
+					pose, 
+					i, 
+					direction=direction,
+					cone_half_angle=cone_half_angle,
+					sample_angle_max=sample_angle_max,
+					sample_angle_step=sample_angle_step,
+					align_to_sampled=align_to_sampled,
+					draw = False,
+				)
+
+				results.append(result)
+
+			if draw == '3d':
+
+				atoms_mesh = mesh_from_AtomGroup(group, use_covalent=True)
+
+				extra = atoms_mesh + [r['arrow_mesh'] for r in results if r['success']] + [r['cone_mesh'] for r in results if r['success']]
+
+				self.render(fragments=False, extra=extra, pockets='hide')
+
+			return results
+
+		else:
+
+			# parse origin argument
+			assert isinstance(origin, int)
+			orig_index = origin
+			orig_atom = group.atoms[origin]
+			origin = orig_atom.position
+
+			# guess the direction
+			if direction is None:
+				direction = self._guess_vector_direction(orig_index, group)
+
+			logger.debug(f'{origin=}')
+			logger.debug(f'{direction=}')
+
+			# first explore using butcher.explore
+			results, arrow_mesh = self.explore(
+				mol, 
+				orig_index, 
+				direction=direction, 
+				samples=True, 
+				sample_choose_best=False,
+				sample_angle_max=sample_angle_max,
+				sample_angle_step=sample_angle_step,
+				return_arrow_mesh=True,
+				draw=False, 
+			)
+			
+			if isinstance(results, dict) and not results['success']:
+				return dict(atom_index=orig_index, success=False)
+
+			sorted_results = sorted([r for r in results if r['success']], 
+				key=lambda x: x['last_intersection_distance'], reverse=True)
+
+			from .o3d import mesh_from_AtomGroup, cone, material, render
+
+			if align_to_sampled and sorted_results:
+				cone_direction = sorted_results[0]['direction']
+			else:
+				cone_direction = direction
+
+			logger.debug(f'{orig_index=}')
+			logger.debug(f'{origin=}')
+			logger.debug(f'{orig_atom=}')
+			logger.debug(f'{cone_direction=}')
+
+			cone_mesh = cone(
+				origin, 
+				cone_direction, 
+				cone_half_angle, 
+				length=sorted_results[0]['last_intersection_distance'], 
+				legacy=False)
+
+			logger.debug(cone_mesh)
+
+			# cone mesh is correct!
+			# render([self.protein_mesh, arrow_mesh, cone_mesh])
+
+			protein_clash = any([r['destination'] == 'protein clash' for r in results])
+			new_pocket = any([r['new_pocket'] for r in results])
+
+			if protein_clash:
+
+				from open3d.t.geometry import TriangleMesh
+				logger.debug('subtracting protein...')
+				cone_mesh['geometry'] = cone_mesh['geometry'].boolean_difference(
+					TriangleMesh.from_legacy(self.protein_mesh['geometry']))
+
+				logger.debug('converting to legacy mesh...')
+				cone_mesh['geometry'] = cone_mesh['geometry'].to_legacy()
+
+				# cone_mesh['geometry'] = cone_mesh['geometry'].fill_holes()
+
+				# cone_mesh is ok
+				# render([self.protein_mesh, arrow_mesh, cone_mesh])
+
+				logger.debug('checking watertight-ness...')
+				if not cone_mesh['geometry'].is_watertight:
+					try:
+						logger.debug('Trying to fix non-watertight mesh...')
+						from .o3d import mesh_fix
+						cone_mesh['geometry'] = mesh_fix(cone_mesh['geometry'])
+					except RuntimeError:
+						logger.error('Could not produce watertight mesh')
+						return dict(atom_index=orig_index, success=False, 
+							cone_mesh=cone_mesh, arrow_mesh=arrow_mesh, best_vector=sorted_results[0], all_vectors=results)
+
+				# cone mesh is ok
+				# render([self.protein_mesh, arrow_mesh, cone_mesh])
+				
+				try:
+					volume = cone_mesh['geometry'].get_volume()
+				except RuntimeError:
+					try:
+						logger.debug('Trying to fix non-watertight mesh...')
+						from .o3d import mesh_fix
+						cone_mesh['geometry'] = mesh_fix(cone_mesh['geometry'])
+					except RuntimeError:
+						logger.error('Could not produce watertight mesh')
+						return dict(atom_index=orig_index, success=False, 
+							cone_mesh=cone_mesh, arrow_mesh=arrow_mesh, best_vector=sorted_results[0], all_vectors=results)
+
+				# cone_mesh is wrong!
+				# render([self.protein_mesh, arrow_mesh, cone_mesh])
+
+				if new_pocket:
+					cone_mesh['material'] = material([0,1,0], alpha=0.8)
+				else:
+					cone_mesh['material'] = material(PROTEIN_COLOR, alpha=0.8)
+
+			else:
+				logger.debug('Cone is heading entirely into the solvent')
+				cone_mesh['geometry'] = cone_mesh['geometry'].to_legacy()
+				cone_mesh['material'] = material(SOLVENT_COLOR, alpha=0.8)
+
+			cone_mesh['geometry'].compute_triangle_normals()
+
+			try:
+				volume = cone_mesh['geometry'].get_volume()
+			except RuntimeError:
+				logger.error("mesh not water tight, can't calculate volume")
+				from .o3d import render	
+				render([self.protein_mesh, cone_mesh, arrow_mesh])
+				raise
+
+			max_heavy_atoms = volume * 0.1762
+
+			logger.success(f'cavity volume = {volume:.1f} Å^3')
+			logger.success(f'max heavy atoms = {max_heavy_atoms:.1f}')
+
+			result = dict(atom_index=orig_index,success=True,volume=volume, 
+				max_heavy_atoms=max_heavy_atoms, cone_mesh=cone_mesh, arrow_mesh=arrow_mesh, 
+				best_vector=sorted_results[0], all_vectors=results)
+
+			if draw == '3d':
+
+				atoms_mesh = mesh_from_AtomGroup(group, use_covalent=True)
+
+				extra = [arrow_mesh, cone_mesh] + atoms_mesh			
+
+				self.render(fragments=False, extra=extra, pockets='hide')
+
+			return result
 
 	def trim(self):
 		try: raise NotImplementedError; 
