@@ -1,6 +1,8 @@
 
 # PoseButcher
 
+![logo](assets/posebutcher_logo-01.png)
+
 > "A good butcher always trims the fat"
 
 PoseButcher is a tool for categorising and segmenting virtual hits with reference to experimental protein structures and (fragment) hits.
