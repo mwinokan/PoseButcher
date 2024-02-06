@@ -224,6 +224,7 @@ class PoseButcher:
 			)
 
 			display(drawing)
+			return drawing
 
 		elif draw == '3d':
 
