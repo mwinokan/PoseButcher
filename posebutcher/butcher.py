@@ -998,16 +998,39 @@ class PoseButcher:
 			1. residue name
 			2. residue number
 			3. atom name
+			4. chain name (optional)
 
-			e.g. "TYR 90 CD2"
+			e.g. "TYR 90 CD2" or "TYR 90 CD2 A"
 
 		"""
 
-		res_name, res_num, atom_name = query.split()
+		split = query.split()
 
-		res = self.protein.residues[f'n{res_num}']
+		if len(split) == 3:
 
-		assert res.name == res_name, f"Residue number queried does not match the queried name: (protein='{res.name}', query='{res_name}')"
+			if len(set([c.name for c in self.protein.chains])) > 1:
+				logger.error('Protein has multiple chains. Use query format: "[res] [res#] [atom] [chain]"')
+				return None
+
+			res_name, res_num, atom_name = query.split()
+
+			res = self.protein.residues[f'n{res_num}']
+
+			assert res.name == res_name, f"Residue number queried does not match the queried name: (protein='{res.name}', query='{res_name}')"
+
+		elif len(split) == 4:
+
+			res_name, res_num, atom_name, chain = query.split()
+
+			residues = [r for r in self.protein.residues if r.chain == chain and r.number == int(res_num)]
+
+			#  and 
+
+			assert len(residues) == 1, residues
+
+			res = residues[0]
+
+			assert res.name == res_name, f"Residue number queried does not match the queried name: (protein='{res.name}', query='{res_name}')"
 
 		return res.get_atom(atom_name)
 
