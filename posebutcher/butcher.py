@@ -69,7 +69,7 @@ class PoseButcher:
 
 	def __init__(self, 
 		protein: str | Path, 
-		fragments: str | Path, 
+		fragments: str | Path | None, 
 		pockets: dict [str, dict] | None = None,
 		pocket_clip: bool = True,
 	) -> None:
@@ -118,12 +118,15 @@ class PoseButcher:
 		self._pocket_clip = pocket_clip
 
 		self._parse_protein(protein)
-		self._parse_fragments(fragments)
+
+		if self.fragment_df:
+			self._parse_fragments(fragments)
 		
 		if pockets:
 			self._parse_pockets(pockets)
 
-		self._build_fragment_bolus()
+		if self.fragment_df:
+			self._build_fragment_bolus()
 
 		# define atom clashes with the protein surface:
 		self._protein_clash_function = lambda atom: atom.vdw_radius*0.5
@@ -1174,7 +1177,7 @@ class PoseButcher:
 			
 			meshes.append(self.protein_mesh)
 
-		if fragments:
+		if self.fragment_df and fragments:
 			if fragments == 'hide':
 				self.fragment_mesh['is_visible'] = False
 			else:
