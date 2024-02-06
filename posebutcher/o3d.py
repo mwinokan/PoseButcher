@@ -312,6 +312,55 @@ def mesh_fix(
 
 	return fixed
 
+def dump_mesh(path, mesh):
+	if hasattr(mesh, 'to_legacy'):
+		mesh = mesh.to_legacy()
+	logger.writing(path)
+	o3d.io.write_triangle_mesh(str(path), mesh)
+
+def load_mesh(path):
+	logger.reading(path)
+	return o3d.io.read_triangle_mesh(str(path))
+
+def material_to_dict(material):
+	payload = {}
+	for prop in dir(material):
+
+		if prop.startswith('_'):
+			continue
+
+		ignore = [
+			'clear',
+			'copy',
+			'fromkeys',
+			'get',
+			'items',
+			'keys',
+			'pop',
+			'popitem',
+			'setdefault',
+			'update',
+			'values',
+		]
+
+		if prop in ignore:
+			continue
+
+		value = getattr(material, prop)
+
+		if isinstance(value, np.ndarray):
+			payload[prop] = [float(v) for v in value]
+		else:
+			payload[prop] = value
+
+	return payload
+
+def material_from_dict(d):
+	mat = o3d.visualization.rendering.MaterialRecord()
+	for k,v in d.items():
+		setattr(mat, k, v)
+	return mat
+
 ### THIS IS NOT WORKING RELIABLY
 def union_mesh_from_atoms(atoms, skip_hydrogen=True):
 

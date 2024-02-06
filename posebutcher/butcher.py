@@ -111,7 +111,6 @@ class PoseButcher:
 		self._protein_mesh = None 			# open3d.geometry.TriangleMesh
 		self._protein_hull = None 			# open3d.geometry.TriangleMesh
 
-		self._fragment_df = None  			# pandas.DataFrame
 		self._fragment_atomgroup = None 	# molparse.AtomGroup
 		self._fragment_mesh = None 			# open3d.geometry.TriangleMesh
 
@@ -119,21 +118,62 @@ class PoseButcher:
 
 		self._parse_protein(protein)
 
-		if self.fragment_df:
-			self._parse_fragments(fragments)
+		if fragments:
+			fragment_df = self._parse_fragments(fragments)
+			self._build_fragment_bolus(fragment_df)
 		
 		if pockets:
 			self._parse_pockets(pockets)
-
-		if self.fragment_df:
-			self._build_fragment_bolus()
 
 		# define atom clashes with the protein surface:
 		self._protein_clash_function = lambda atom: atom.vdw_radius*0.5
 
 		logger.success('PoseButcher initialised')
 
-	
+
+	### FACTORIES
+
+	@classmethod
+	def from_directory(cls, path):
+		import pickle
+		import json
+		from .o3d import load_mesh, material_from_dict
+
+		path = Path(path)
+		
+		self = cls.__new__(cls)
+
+		for js in path.glob('*.json'):
+			
+			logger.reading(js)
+			with open(js,'rt') as f:
+				d = json.load(f)
+			break
+		else:
+			logger.error('No JSON file in subdirectory')
+
+		self.fragment_atomgroup = d['_fragment_atomgroup']
+		self.fragment_mesh = d['_fragment_mesh']
+		self.protein = d['_protein']
+		self.protein_hull = d['_protein_hull']
+		self.protein_mesh = d['_protein_mesh']
+		self._apo_protein_path = d['_protein']
+
+		self.protein_mesh['material'] = material_from_dict(self.protein_mesh['material'])
+		self.protein_hull['material'] = material_from_dict(self.protein_hull['material'])
+
+		# pockets
+		self._pockets = { k:{
+			'name':k,
+			'geometry':load_mesh(v['geometry']),
+			'material':material_from_dict(v['material']),
+			'radius':v['radius'],
+		} for k,v in d['_pockets'].items()}
+
+		logger.success('PoseButcher loaded')
+
+		return self
+		
 	### PUBLIC METHODS
 
 	def chop(self, 
@@ -730,23 +770,108 @@ class PoseButcher:
 	def render(self, hull='hide', **kwargs):
 		self._render_meshes(hull=hull, **kwargs)
 
+	def write(self, subdir, generate_meshes=True):
+		import json
+		from pathlib import Path
+
+		logger.writing(subdir)
+		subdir = Path(subdir)
+		subdir.mkdir(parents=True, exist_ok=True)
+
+		# generate meshes
+		if generate_meshes:
+			_ = self.protein_mesh
+			_ = self.protein_hull
+
+		d = self.dict
+
+		from .o3d import dump_mesh, material_to_dict
+
+		# protein
+		path = str(subdir / f'protein.pdb')
+		logger.writing(path)
+		mp.write(path, d['_protein'], shift_name=True, verbosity=False)
+		d['_protein'] = path
+		d['_apo_protein_path'] = path
+
+		# fragment atomgroup
+		if d['_fragment_atomgroup']:
+			path = str(subdir / f'_fragment_atomgroup.pdb')
+			logger.writing(path)
+			mp.write(path, d['_fragment_atomgroup'], verbosity=False)
+			d['_fragment_atomgroup'] = path
+
+		# pockets
+		for pocket, value in d['_pockets'].items():
+			mesh = value['geometry'].to_legacy()
+			path = str(subdir / f'pocket_{pocket}.ply')
+			dump_mesh(path, mesh)
+			value['geometry'] = path
+			value['material'] = material_to_dict(value['material'])
+
+		# _fragment_mesh
+		if d['_fragment_mesh']:
+			path = str(subdir / f'_fragment_mesh.ply')
+			mesh = d['_fragment_mesh']['geometry'].to_legacy()
+			dump_mesh(path, mesh)
+			d['_fragment_mesh']['geometry'] = path
+			d['_fragment_mesh']['material'] = material_to_dict(d['_fragment_mesh']['material'])
+
+		# _protein_hull
+		if d['_protein_hull']:
+			path = str(subdir / f'_protein_hull.ply')
+			mesh = d['_protein_hull']['geometry']
+			dump_mesh(path, mesh)
+			d['_protein_hull']['geometry'] = path
+			d['_protein_hull']['material'] = material_to_dict(d['_protein_hull']['material'])
+
+		# _protein_mesh
+		if d['_protein_mesh']:
+			path = str(subdir / f'_protein_mesh.ply')
+			mesh = d['_protein_mesh']['geometry']
+			dump_mesh(path, mesh)
+			d['_protein_mesh']['geometry'] = path
+			d['_protein_mesh']['material'] = material_to_dict(d['_protein_mesh']['material'])
+
+		logger.writing(subdir / f'{subdir.name}.json')
+		with open(subdir / f'{subdir.name}.json', mode='wt') as f:
+			json.dump(d, f, indent=2)
+
+		logger.success('Export finished')
+
 	### PROPERTIES
 
 	@property
 	def protein(self):
 		return self._protein
 
+	@protein.setter
+	def protein(self, a):
+		if a is None:
+			self._protein = None
+		elif isinstance(a, str):			
+			logger.reading(a)
+			self._protein = mp.parsePDB(a, verbosity=False).protein_system
+		else:
+			raise NotImplementedError
+
 	@property
 	def pockets(self):
 		return self._pockets
 
 	@property
-	def fragment_df(self):
-		return self._fragment_df
-
-	@property
 	def fragment_atomgroup(self):
 		return self._fragment_atomgroup
+
+	@fragment_atomgroup.setter
+	def fragment_atomgroup(self, a):
+		if a is None:
+			self._fragment_atomgroup = None
+		elif isinstance(a, str):			
+			logger.reading(a)
+			self._fragment_atomgroup = mp.parsePDB(a, verbosity=False)
+		else:
+			raise NotImplementedError
 
 	@property
 	def fragment_mesh(self):
@@ -783,6 +908,18 @@ class PoseButcher:
 
 		return self._fragment_mesh
 
+	@fragment_mesh.setter
+	def fragment_mesh(self, a):
+		if a is None:
+			self._fragment_mesh = None
+		elif isinstance(a, dict):
+			if isinstance(a['geometry'], str):
+				from .o3d import load_mesh
+				a['geometry'] = load_mesh(a['geometry'])
+			self._fragment_mesh = a
+		else:
+			raise NotImplementedError
+
 	@property
 	def protein_mesh(self):
 		if self._protein_mesh is None:
@@ -801,6 +938,18 @@ class PoseButcher:
 			)
 			
 		return self._protein_mesh
+
+	@protein_mesh.setter
+	def protein_mesh(self, a):
+		if a is None:
+			self._protein_mesh = None
+		elif isinstance(a, dict):
+			if isinstance(a['geometry'], str):
+				from .o3d import load_mesh
+				a['geometry'] = load_mesh(a['geometry'])
+			self._protein_mesh = a
+		else:
+			raise NotImplementedError
 
 	@property
 	def pocket_meshes(self):
@@ -827,6 +976,62 @@ class PoseButcher:
 
 		return self._protein_hull
 	
+	@protein_hull.setter
+	def protein_hull(self, a):
+		if a is None:
+			self._protein_hull = None
+		elif isinstance(a, dict):
+			if isinstance(a['geometry'], str):
+				from .o3d import load_mesh
+				a['geometry'] = load_mesh(a['geometry'])
+			self._protein_hull = a
+		else:
+			raise NotImplementedError
+
+	@property
+	def dict(self):
+		
+		from copy import deepcopy
+
+		d = {
+			'_fragment_atomgroup': self._fragment_atomgroup,
+			'_protein': self._protein,
+			'_fragment_mesh': None,
+			'_protein_hull': None,
+			'_protein_mesh': None,
+		}
+
+		if self._fragment_mesh:
+			d['_fragment_mesh'] = {
+				'name': self._fragment_mesh['name'],
+				'geometry': self._fragment_mesh['geometry'],
+				'material': self._fragment_mesh['material'],
+			}
+
+		if self._protein_hull:
+			d['_protein_hull'] = {
+				'name': self._protein_hull['name'],
+				'geometry': self._protein_hull['geometry'],
+				'material': self._protein_hull['material'],
+			}
+
+		if self._protein_mesh:
+			d['_protein_mesh'] = {
+				'name': self._protein_mesh['name'],
+				'geometry': self._protein_mesh['geometry'],
+				'material': self._protein_mesh['material'],
+			}
+		
+		# pockets
+		d['_pockets'] = { k:{
+			'name':k,
+			'geometry':v['geometry'],
+			'material':v['material'],
+			'radius':v['radius'],
+		} for k,v in self._pockets.items()}
+
+		return d
+
 	### INTERNAL METHODS
 
 	def _parse_protein(self, protein):
@@ -846,8 +1051,8 @@ class PoseButcher:
 		if isinstance(fragments,str) and fragments.endswith('.sdf'):
 			logger.reading(fragments)
 			from rdkit.Chem import PandasTools
-			self._fragment_df = PandasTools.LoadSDF(fragments)
-			return
+			fragment_df = PandasTools.LoadSDF(fragments)
+			return fragment_df
 		
 		elif isinstance(fragments, Path) and fragments.is_dir():
 			raise NotImplementedError
@@ -1176,11 +1381,11 @@ class PoseButcher:
 
 		return id_lookup, scene.cast_rays(rays)
 
-	def _build_fragment_bolus(self):
+	def _build_fragment_bolus(self, fragment_df):
 
 		atoms = []
 
-		for name,mol in zip(self.fragment_df['ID'], self.fragment_df['ROMol']):
+		for name,mol in zip(fragment_df['ID'], fragment_df['ROMol']):
 
 			for atom in mp.rdkit.mol_to_AtomGroup(mol).atoms:
 				atom.residue = name
@@ -1201,7 +1406,7 @@ class PoseButcher:
 			
 			meshes.append(self.protein_mesh)
 
-		if self.fragment_df and fragments:
+		if self.fragment_atomgroup and fragments:
 			if fragments == 'hide':
 				self.fragment_mesh['is_visible'] = False
 			else:
@@ -1335,7 +1540,7 @@ def circular_samples(theta_max, theta_step):
 			coords.append([x,y])
 
 	return coords
-    
+	
 def create_arrow_mesh(orig_atom, orig_index, origin, color_by_distance, result):
 
 	from .o3d import arrow
@@ -1387,16 +1592,16 @@ FRAGMENT_COLOR = (1.0, 0.4980392156862745, 0.054901960784313725) 			   # 'tab:or
 BASE_COLOR = (0.4980392156862745, 0.4980392156862745, 0.4980392156862745)   # 'tab:gray'
 
 POCKET_COLORS = [
-    (0.17254901960784313, 0.6274509803921569, 0.17254901960784313), # 'tab:green'
-    (0.5803921568627451, 0.403921568627451, 0.7411764705882353),    # 'tab:purple'
-    (0.5490196078431373, 0.33725490196078434, 0.29411764705882354), # 'tab:brown'
-    (0.8901960784313725, 0.4666666666666667, 0.7607843137254902),   # 'tab:pink'
-    (0.7372549019607844, 0.7411764705882353, 0.13333333333333333),  # 'tab:olive'
-    (0.09019607843137255, 0.7450980392156863, 0.8117647058823529),  # 'tab:cyan'
-    
-    (0.4980392156862745, 0.4980392156862745, 0.4980392156862745),   # 'tab:gray'
-    (1.0, 0.4980392156862745, 0.054901960784313725), 				# 'tab:orange'
-    (0.8392156862745098, 0.15294117647058825, 0.1568627450980392),  # 'tab:red'
+	(0.17254901960784313, 0.6274509803921569, 0.17254901960784313), # 'tab:green'
+	(0.5803921568627451, 0.403921568627451, 0.7411764705882353),    # 'tab:purple'
+	(0.5490196078431373, 0.33725490196078434, 0.29411764705882354), # 'tab:brown'
+	(0.8901960784313725, 0.4666666666666667, 0.7607843137254902),   # 'tab:pink'
+	(0.7372549019607844, 0.7411764705882353, 0.13333333333333333),  # 'tab:olive'
+	(0.09019607843137255, 0.7450980392156863, 0.8117647058823529),  # 'tab:cyan'
+	
+	(0.4980392156862745, 0.4980392156862745, 0.4980392156862745),   # 'tab:gray'
+	(1.0, 0.4980392156862745, 0.054901960784313725), 				# 'tab:orange'
+	(0.8392156862745098, 0.15294117647058825, 0.1568627450980392),  # 'tab:red'
 ]
 
 CC_DIST = 1.54
