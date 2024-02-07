@@ -897,7 +897,13 @@ class PoseButcher:
 			# create the mesh from the PDB
 			from .o3d import mesh_from_pdb, material
 			logger.warning('excuse the PyGAMer warnings... (they are safe to ignore)')
-			mesh = mesh_from_pdb(self._fragment_bolus_path, gauss=False).to_legacy()
+
+			try:
+				mesh = mesh_from_pdb(self._fragment_bolus_path, gauss=False).to_legacy()
+			except ModuleNotFoundError as e:
+				logger.error('Could not generate fragment bolus mesh (no PyGAMer)')
+				return self._fragment_mesh
+
 			mesh.compute_vertex_normals()
 			mat = material(FRAGMENT_COLOR, alpha=1.0)
 			self._fragment_mesh = dict(
@@ -927,7 +933,11 @@ class PoseButcher:
 
 			from .o3d import mesh_from_pdb, material
 			
-			mesh = mesh_from_pdb(self._apo_protein_path).to_legacy()
+			try:
+				mesh = mesh_from_pdb(self._apo_protein_path).to_legacy()
+			except ModuleNotFoundError as e:
+				logger.error('Could not generate protein mesh (no PyGAMer)')
+				return self._protein_mesh
 
 			mesh.compute_vertex_normals()
 
@@ -948,6 +958,11 @@ class PoseButcher:
 				from .o3d import load_mesh
 				a['geometry'] = load_mesh(a['geometry'])
 			self._protein_mesh = a
+		elif isinstance(a, str) and a.endswith('.ply'):
+			from .o3d import load_mesh
+			self._protein_mesh = {}
+			self._protein_mesh['geometry'] = load_mesh(a)
+
 		else:
 			raise NotImplementedError
 
@@ -965,7 +980,12 @@ class PoseButcher:
 			logger.debug('Generating protein convex hull...')
 			from .o3d import convex_hull, material
 			from copy import deepcopy
-			mesh = deepcopy(self.protein_mesh['geometry'])
+
+			protein_mesh = self.protein_mesh
+			if self.protein_mesh is None:
+				return None
+
+			mesh = deepcopy(protein_mesh['geometry'])
 			mesh = convex_hull(mesh)
 			mesh.compute_vertex_normals()
 			self._protein_hull = dict(
@@ -1177,20 +1197,33 @@ class PoseButcher:
 		# clip the pockets by their bisector planes
 		if protein:
 			logger.debug('clipping pockets (protein)')
-			
-			protein = TriangleMesh.from_legacy(self.protein_mesh['geometry'])
 
-			for mesh in self.pocket_meshes:
-				mesh['geometry'] = mesh['geometry'].boolean_difference(protein)
+			protein_mesh = self.protein_mesh
+
+			if protein_mesh is None:
+				logger.error("No protein mesh, can't clip pockets")
+
+			else:
+				protein = TriangleMesh.from_legacy(protein_mesh['geometry'])
+
+				for mesh in self.pocket_meshes:
+					mesh['geometry'] = mesh['geometry'].boolean_difference(protein)
 
 		# clip the pockets to the convex hull of the protein
 		if hull:
 			logger.debug('clipping pockets (protein hull)')
 
-			protein = TriangleMesh.from_legacy(self.protein_hull)
+			protein_mesh = self.protein_hull
 
-			for mesh in self.pocket_meshes:
-				mesh['geometry'] = mesh['geometry'].boolean_intersection(protein)
+			if protein_mesh is None:
+				logger.error("No protein hull, can't clip pockets")
+
+			else:
+
+				protein = TriangleMesh.from_legacy(protein_mesh['geometry'])
+
+				for mesh in self.pocket_meshes:
+					mesh['geometry'] = mesh['geometry'].boolean_intersection(protein)
 
 		logger.success('Pocket clipping complete')
 
