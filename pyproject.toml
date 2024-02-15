@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 [project]
 name = "PoseButcher"
-version = "0.0.13"
+version = "0.0.14"
 authors = [
     { name="Max Winokan", email="max@winokan.com"},
 ]
