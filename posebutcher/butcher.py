@@ -170,6 +170,8 @@ class PoseButcher:
 			'radius':v['radius'],
 		} for k,v in d['_pockets'].items()}
 
+		self._protein_clash_function = lambda atom: atom.vdw_radius*0.5
+
 		logger.success('PoseButcher loaded')
 
 		return self
