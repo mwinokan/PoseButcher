@@ -1418,10 +1418,9 @@ class PoseButcher:
 
 		atoms = []
 
-		for name,mol in zip(fragment_df['ID'], fragment_df['ROMol']):
-
+		for i,(name,mol) in enumerate(zip(fragment_df['ID'], fragment_df['ROMol'])):
 			for atom in mp.rdkit.mol_to_AtomGroup(mol).atoms:
-				atom.residue = name
+				atom.residue = 'LIG'
 				atoms.append(atom)
 
 		self._fragment_atomgroup = mp.AtomGroup.from_any('Fragment Bolus', atoms)
