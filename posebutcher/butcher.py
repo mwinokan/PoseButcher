@@ -122,8 +122,9 @@ class PoseButcher:
 			fragment_df = self._parse_fragments(fragments)
 			self._build_fragment_bolus(fragment_df)
 		
+		self._pocket_definitions = pockets
 		if pockets:
-			self._parse_pockets(pockets)
+			self._parse_pockets()
 
 		# define atom clashes with the protein surface:
 		self._protein_clash_function = lambda atom: atom.vdw_radius*0.5
@@ -163,6 +164,8 @@ class PoseButcher:
 		self.protein_hull['material'] = material_from_dict(self.protein_hull['material'])
 
 		# pockets
+		self._pocket_definitions = d['_pocket_definitions']
+		self._pocket_clip = d['_pocket_clip']
 		self._pockets = { k:{
 			'name':k,
 			'geometry':load_mesh(v['geometry']),
@@ -183,6 +186,7 @@ class PoseButcher:
 		base: str | Mol | None = None, 
 		draw: str | None | bool = '2d', 
 		fragments: bool = False,
+		count: bool = False,
 	) -> dict [str, tuple]:
 
 		'''
@@ -266,7 +270,6 @@ class PoseButcher:
 			)
 
 			display(drawing)
-			return drawing
 
 		elif draw == '3d':
 
@@ -278,6 +281,9 @@ class PoseButcher:
 				hull='hide', 
 				extra=mesh_from_AtomGroup(pose, use_covalent=True)
 			)
+
+		if count:
+			output = self.summarise_output(output)
 
 		return output
 
@@ -794,7 +800,7 @@ class PoseButcher:
 		logger.writing(path)
 		mp.write(path, d['_protein'], shift_name=True, verbosity=False)
 		d['_protein'] = path
-		d['_apo_protein_path'] = path
+		d['_pocket_definitions'] = path
 
 		# fragment atomgroup
 		if d['_fragment_atomgroup']:
@@ -804,6 +810,8 @@ class PoseButcher:
 			d['_fragment_atomgroup'] = path
 
 		# pockets
+		d['_pocket_definitions'] = self._pocket_definitions
+		d['_pocket_clip'] = self._pocket_clip
 		for pocket, value in d['_pockets'].items():
 			mesh = value['geometry'].to_legacy()
 			path = str(subdir / f'pocket_{pocket}.ply')
@@ -851,11 +859,8 @@ class PoseButcher:
 	def protein(self, a):
 		if a is None:
 			self._protein = None
-		elif isinstance(a, str):			
-			logger.reading(a)
-			self._protein = mp.parsePDB(a, verbosity=False).protein_system
 		else:
-			raise NotImplementedError
+			self._parse_protein(a)
 
 	@property
 	def pockets(self):
@@ -1021,6 +1026,7 @@ class PoseButcher:
 			'_fragment_mesh': None,
 			'_protein_hull': None,
 			'_protein_mesh': None,
+			'_pocket_definitions': self._pocket_definitions,
 		}
 
 		if self._fragment_mesh:
@@ -1082,7 +1088,9 @@ class PoseButcher:
 		else:
 			raise NotImplementedError
 
-	def _parse_pockets(self, pockets):
+	def _parse_pockets(self):
+
+		pockets = self._pocket_definitions
 		
 		for name, d in pockets.items():
 
@@ -1538,6 +1546,22 @@ class PoseButcher:
 		direction = origin - nearby_atom_center
 
 		return direction
+
+	def summarise_output(self, output):
+
+		summary = {}
+
+		summary['BAD'] = len([0 for o in output.values() if o[0] == 'BAD'])
+		summary['GOOD'] = len([0 for o in output.values() if o[0] == 'GOOD'])
+		
+		summary['protein clash'] = len([0 for o in output.values() if o[1] == 'protein clash'])
+		summary['solvent space'] = len([0 for o in output.values() if o[1] == 'solvent space'])
+		summary['pocket'] = len([0 for o in output.values() if o[1] == 'pocket'])
+		
+		for p_name in self.pockets:
+			summary[p_name] = len([0 for o in output.values() if o[1] == 'pocket' and o[2] == p_name ])
+
+		return summary
 
 def output_to_label(output, index):
 
