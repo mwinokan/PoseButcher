@@ -5,7 +5,7 @@ ase
 rdkit
 py3Dmol
 IPython
-open3d >= 0.18
+open3d == 0.18.0
 numpy
 jupyterlab
 pandas
