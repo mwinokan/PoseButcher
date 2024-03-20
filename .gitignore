@@ -4,3 +4,5 @@ __pycache__/
 *.sublime-*
 *.pyc
 old/
+dist/
+docs/build/
