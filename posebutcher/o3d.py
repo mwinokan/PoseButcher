@@ -13,7 +13,7 @@ def sphere(radius=1.0, position=None, resolution=20, legacy=False):
 	if position is not None:
 		mesh.translate(position)
 	if not legacy:
-		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh, vertex_dtype=o3d.core.Dtype.Float32)
 	return mesh
 
 def arrow(origin, direction, length, radius=0.5, color=[0,1,0]):
@@ -71,7 +71,7 @@ def cylinder(origin, direction, length=None, radius=0.25, legacy=False, resoluti
 	mesh.translate(origin)
 
 	if not legacy:
-		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh, vertex_dtype=o3d.core.Dtype.Float32)
 
 	return mesh
 
@@ -99,7 +99,7 @@ def cone(origin, direction, half_angle, length, resolution=30, legacy=False):
 	mesh.compute_triangle_normals()
 
 	if not legacy:
-		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh, vertex_dtype=o3d.core.Dtype.Float32)
 
 	return dict(geometry=mesh, name='cone')
 
@@ -215,7 +215,10 @@ def union(mesh1, mesh2):
 	return mesh
 
 def is_point_in_mesh(mesh, point, within=0.0, tolerance=0.1):
-	return bool(signed_distance(mesh,point)[0] < tolerance + within)
+	dist = signed_distance(mesh,point)[0]
+	if dist is None:
+		return None
+	return bool(dist < tolerance + within)
 
 def signed_distance(mesh, point):
 
@@ -224,11 +227,16 @@ def signed_distance(mesh, point):
 	scene = o3d.t.geometry.RaycastingScene()
 
 	if isinstance(mesh, dict):
+		# print(mesh)
 		mesh = mesh['geometry']
 
-	if not isinstance(mesh, o3d.t.geometry.TriangleMesh):
-		mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
-	_ = scene.add_triangles(mesh)
+	try:
+		if not isinstance(mesh, o3d.t.geometry.TriangleMesh):
+			mesh = o3d.t.geometry.TriangleMesh.from_legacy(mesh, vertex_dtype=o3d.core.Dtype.Float32)
+		_ = scene.add_triangles(mesh)
+	except RuntimeError as e:
+		logger.error(e)
+		return None
 
 	return scene.compute_signed_distance(query_point)
 
@@ -258,7 +266,7 @@ def convex_hull(mesh):
 		return mesh
 
 def tensor_from_legacy(mesh):
-	return o3d.t.geometry.TriangleMesh.from_legacy(mesh)
+	return o3d.t.geometry.TriangleMesh.from_legacy(mesh, vertex_dtype=o3d.core.Dtype.Float32)
 
 def subtract_atoms(mesh, group, r_scale=1.0, use_covalent=False):
 
@@ -307,7 +315,7 @@ def mesh_fix(
 	fixed = o3d.io.read_triangle_mesh(temp_path)
 
 	if clip_to_hull:
-		clipped = o3d.t.geometry.TriangleMesh.from_legacy(fixed).boolean_intersection(o3d.t.geometry.TriangleMesh.from_legacy(convex_hull(mesh)))
+		clipped = o3d.t.geometry.TriangleMesh.from_legacy(fixed, vertex_dtype=o3d.core.Dtype.Float32).boolean_intersection(o3d.t.geometry.TriangleMesh.from_legacy(convex_hull(mesh)), vertex_dtype=o3d.core.Dtype.Float32)
 		return clipped
 
 	return fixed

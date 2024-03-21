@@ -69,9 +69,12 @@ class PoseButcher:
 
 	def __init__(self, 
 		protein: str | Path, 
-		fragments: str | Path | None, 
+		fragments: str | Path | None = None, 
 		pockets: dict [str, dict] | None = None,
 		pocket_clip: bool = True,
+		pocket_clip_protein: bool = True,
+		pocket_clip_hull: bool = True,
+		pocket_chains: None | list[str] = None,
 	) -> None:
 
 		'''Create a Butcher with a protein structure and pocket information
@@ -115,12 +118,27 @@ class PoseButcher:
 		self._fragment_mesh = None 			# open3d.geometry.TriangleMesh
 
 		self._pocket_clip = pocket_clip
+		self._pocket_clip_protein = pocket_clip_protein
+		self._pocket_clip_hull = pocket_clip_hull
 
 		self._parse_protein(protein)
 
 		if fragments:
 			fragment_df = self._parse_fragments(fragments)
 			self._build_fragment_bolus(fragment_df)
+		
+		if pockets and pocket_chains:
+			from copy import deepcopy
+			new_pockets = {}
+			for chain in pocket_chains:
+				for k,v in pockets.items():
+					# print(v)
+					new_pockets[f'{k} ({chain})'] = deepcopy(v)
+					new_pockets[f'{k} ({chain})']['atoms'] = [f'{s} {chain}' for s in v['atoms']]
+			pockets = new_pockets
+			# print(new_pockets)
+
+		# print(pockets)
 		
 		self._pocket_definitions = pockets
 		if pockets:
@@ -139,6 +157,7 @@ class PoseButcher:
 		import pickle
 		import json
 		from .o3d import load_mesh, material_from_dict
+		from numpy import array
 
 		path = Path(path)
 		
@@ -153,6 +172,8 @@ class PoseButcher:
 		else:
 			logger.error('No JSON file in subdirectory')
 
+		self._pocket_definitions = None
+
 		self.fragment_atomgroup = d['_fragment_atomgroup']
 		self.fragment_mesh = d['_fragment_mesh']
 		self.protein = d['_protein']
@@ -166,11 +187,14 @@ class PoseButcher:
 		# pockets
 		self._pocket_definitions = d['_pocket_definitions']
 		self._pocket_clip = d['_pocket_clip']
+		self._pocket_clip_protein = d['_pocket_clip_protein']
+		self._pocket_clip_hull = d['_pocket_clip_hull']
 		self._pockets = { k:{
 			'name':k,
 			'geometry':load_mesh(v['geometry']),
 			'material':material_from_dict(v['material']),
 			'radius':v['radius'],
+			'center':array(v['center']),
 		} for k,v in d['_pockets'].items()}
 
 		self._protein_clash_function = lambda atom: atom.vdw_radius*0.5
@@ -187,6 +211,7 @@ class PoseButcher:
 		draw: str | None | bool = '2d', 
 		fragments: bool = False,
 		count: bool = False,
+		pockets_only: bool = False,
 	) -> dict [str, tuple]:
 
 		'''
@@ -235,7 +260,7 @@ class PoseButcher:
 		# classify atoms
 		output = {}
 		for i,atom in enumerate(atoms):
-			output[i] = self._classify_atom(atom, fragments=fragments)
+			output[i] = self._classify_atom(atom, fragments=fragments, pockets_only=pockets_only)
 
 		if base:
 			if isinstance(base,str):
@@ -301,12 +326,12 @@ class PoseButcher:
 
 		See the docstring for PoseButcher.chop() to see information about the other arguments."""
 
-		output = self.chop(pose, base=base, draw=draw, fragments=False)
+		output = self.chop(pose, base=base, draw=draw, fragments=False, pockets_only=pockets_only)
 
-		if pockets_only:
-			return set([d[2] for d in output.values() if d[1] == 'pocket'])
-		else:
-			return set([d[2] if d[1] == 'pocket' else d[1] for d in output.values()])
+		# if pockets_only:
+			# return set([d[2] for d in output.values() if d[1] == 'pocket'])
+		# else:
+		return set([d[2] if d[1] == 'pocket' else d[1] for d in output.values() if d])
 
 	def explore(self,
 		pose: Mol | AtomGroup,
@@ -812,6 +837,8 @@ class PoseButcher:
 		# pockets
 		d['_pocket_definitions'] = self._pocket_definitions
 		d['_pocket_clip'] = self._pocket_clip
+		d['_pocket_clip_protein'] = self._pocket_clip_protein
+		d['_pocket_clip_hull'] = self._pocket_clip_hull
 		for pocket, value in d['_pockets'].items():
 			mesh = value['geometry'].to_legacy()
 			path = str(subdir / f'pocket_{pocket}.ply')
@@ -861,6 +888,8 @@ class PoseButcher:
 			self._protein = None
 		else:
 			self._parse_protein(a)
+			if self._pocket_definitions:
+				self._parse_pockets()
 
 	@property
 	def pockets(self):
@@ -1056,6 +1085,7 @@ class PoseButcher:
 			'geometry':v['geometry'],
 			'material':v['material'],
 			'radius':v['radius'],
+			'center':list(v['center']),
 		} for k,v in self._pockets.items()}
 
 		return d
@@ -1103,7 +1133,9 @@ class PoseButcher:
 				atoms = None
 				center = d['center']
 			else:
-				atoms = [self._get_protein_atom(s) for s in d['atoms']]
+				atoms = [a for s in d['atoms'] if (a := self._get_protein_atom(s))]
+				if not atoms:
+					continue
 				center = None
 
 			if 'shift' in d:
@@ -1114,7 +1146,7 @@ class PoseButcher:
 			self._spherical_pocket_from_atoms(name, atoms, center=center, radius=radius, shift=shift)
 
 		if self._pocket_clip:
-			self._clip_pockets()
+			self._clip_pockets(protein=self._pocket_clip_protein, hull=self._pocket_clip_hull)
 
 	def _spherical_pocket_from_atoms(self, name, atoms, center=None, radius='mean', shift=None):
 
@@ -1157,12 +1189,14 @@ class PoseButcher:
 		# mesh.compute_triangle_normals()
 		mesh.compute_vertex_normals()
 
-		self._new_pocket(name, mesh, mat, radius=r)
+		self._new_pocket(name, mesh, mat, radius=r, center=com)
 
 	def _clip_pockets(self, protein=True, pockets=True, hull=False, pocket_bisector=False):
 		
 		from numpy.linalg import norm
+		from numpy import float32
 		from open3d.t.geometry import TriangleMesh
+		from open3d import core
 
 		from open3d import utility
 		utility.set_verbosity_level(utility.VerbosityLevel.Error)
@@ -1176,33 +1210,113 @@ class PoseButcher:
 			for i,pocket1 in enumerate(self.pocket_meshes):
 
 				for pocket2 in self.pocket_meshes[i+1:]:
+					
+					if not hasattr(pocket1['geometry'], 'get_center'):
+						pocket1['geometry'] = pocket1['geometry'].to_legacy()
+					if not hasattr(pocket2['geometry'], 'get_center'):
+						pocket2['geometry'] = pocket2['geometry'].to_legacy()
+
+					# print(len(pocket1['geometry']))
+					# print(pocket1['geometry'])
+
+					if hasattr(pocket1['geometry'],'to_legacy'):
+						# print(pocket1['geometry'].to_legacy().has_vertices())
+						if not pocket1['geometry'].to_legacy().has_vertices():
+							continue
+					else:
+						# print(pocket1['geometry'].has_vertices())
+						if not pocket1['geometry'].has_vertices():
+							continue
+
+					if hasattr(pocket2['geometry'],'to_legacy'):
+						if not pocket2['geometry'].to_legacy().has_vertices():
+							continue
+					else:
+						if not pocket2['geometry'].has_vertices():
+							continue
 
 					center1 = pocket1['geometry'].get_center()
 					center2 = pocket2['geometry'].get_center()
 
-					distance = norm((center1 - center2).numpy())
+					if hasattr(center1, 'numpy'):
+						center1 = center1.numpy()
+					if hasattr(center2, 'numpy'):
+						center2 = center2.numpy()
+
+					# print(center1, type(center1))
+					# print(center2, type(center2))
+
+					center1 = float32(center1)
+					center2 = float32(center2)
+
+					diff_vect_12 = (center1 - center2)
+					if hasattr(diff_vect_12, 'numpy'):
+						diff_vect_12 = diff_vect_12.numpy()
+					distance = norm(diff_vect_12)
+
+					diff_vect_21 = -diff_vect_12
 
 					r_sum = pocket1['radius'] + pocket2['radius']
 
+					# if distance >= r_sum - 0.25:
 					if distance >= r_sum:
 						continue
 
 					if pocket_bisector:
-						plane_center = (center1 + center2)/2
+						sum_vect = (center1 + center2)
+						if hasattr(sum_vect, 'numpy'):
+							sum_vect = sum_vect.numpy()
+						plane_center = (sum_vect)/2
 					else:
 						x = (distance*distance - pocket2['radius']*pocket2['radius'] + pocket1['radius']*pocket1['radius'])/(2*distance)
 
-						plane_center = center1 + x / distance * (center2 - center1).numpy()
+						plane_center = center1 + x / distance * diff_vect_21
 
-					plane_normal = (center1 - center2)
+					plane_normal = diff_vect_12
+
+					if not hasattr(pocket1['geometry'], 'clip_plane'):
+						pocket1['geometry'] = TriangleMesh.from_legacy(pocket1['geometry'], vertex_dtype=core.Dtype.Float32)
+					if not hasattr(pocket2['geometry'], 'clip_plane'):
+						pocket2['geometry'] = TriangleMesh.from_legacy(pocket2['geometry'], vertex_dtype=core.Dtype.Float32)
 
 					pocket1['geometry'] = pocket1['geometry'].clip_plane(plane_center, plane_normal)
-
 					pocket2['geometry'] = pocket2['geometry'].clip_plane(plane_center, -plane_normal)
 
+					if not pocket1['geometry'].to_legacy().has_vertices():
+						logger.error(f'pocket1={pocket1["name"]} has no vertices after clipping with pocket2={pocket2["name"]}')
+						logger.debug(f'{pocket1["center"]=}')
+						logger.debug(f'{pocket2["center"]=}')
+						logger.debug(f'{pocket1["radius"]=}')
+						logger.debug(f'{pocket2["radius"]=}')
+						logger.debug(f'{diff_vect_12=}')
+						logger.debug(f'{norm(diff_vect_12)=}')
+						logger.error('Try setting slightly larger pocke radii?')
+
+					if not pocket2['geometry'].to_legacy().has_vertices():
+						logger.error(f'pocket2={pocket2["name"]} has no vertices after clipping with pocket1={pocket1["name"]}')
+			
 			logger.debug('pocket convex hull...')
-			for pocket in self.pocket_meshes:
+			for i,pocket in reversed(list(enumerate(self.pocket_meshes))):
+
+				if hasattr(pocket['geometry'],'to_legacy'):
+					# print(pocket['geometry'].to_legacy().has_vertices())
+					if not pocket['geometry'].to_legacy().has_vertices():
+						logger.error(f'Pocket has no vertices (deleting): {pocket["name"]=}')
+						del self.pocket_meshes[i]
+						continue
+				else:
+					# print(pocket['geometry'].has_vertices())
+					if not pocket['geometry'].has_vertices():
+						logger.error(f'Pocket has no vertices (deleting): {pocket["name"]=}')
+						del self.pocket_meshes[i]
+						continue
+
+				# print(pocket['geometry'])
 				pocket['geometry'] = pocket['geometry'].compute_convex_hull()
+
+				# convert to Float32 etc:
+				pocket['geometry'] = pocket['geometry'].to_legacy()
+				pocket['geometry'] = TriangleMesh.from_legacy(pocket['geometry'], vertex_dtype=core.Dtype.Float32)
 
 		# clip the pockets by their bisector planes
 		if protein:
@@ -1216,8 +1330,8 @@ class PoseButcher:
 			else:
 				protein = TriangleMesh.from_legacy(protein_mesh['geometry'])
 
-				for mesh in self.pocket_meshes:
-					mesh['geometry'] = mesh['geometry'].boolean_difference(protein)
+				for pocket in self.pocket_meshes:
+					pocket['geometry'] = pocket['geometry'].boolean_difference(protein)
 
 		# clip the pockets to the convex hull of the protein
 		if hull:
@@ -1254,6 +1368,8 @@ class PoseButcher:
 
 		split = query.split()
 
+		# logger.debug(query)
+
 		if len(split) == 3:
 
 			if len(set([c.name for c in self.protein.chains])) > 1:
@@ -1270,6 +1386,9 @@ class PoseButcher:
 
 			res_name, res_num, atom_name, chain = query.split()
 
+			if chain not in self.protein.chain_names:
+				return None
+
 			residues = [r for r in self.protein.residues if r.chain == chain and r.number == int(res_num)]
 
 			#  and 
@@ -1278,7 +1397,7 @@ class PoseButcher:
 
 			res = residues[0]
 
-			assert res.name == res_name, f"Residue number queried does not match the queried name: (protein='{res.name}', query='{res_name}')"
+			assert res.name == res_name, f"Residue number queried does not match the queried name: (protein='{res.name}', query='{query}')"
 
 		return res.get_atom(atom_name)
 
@@ -1291,31 +1410,42 @@ class PoseButcher:
 			for k,v in kwargs.items():
 				self._pockets[name][k] = v
 
-	def _classify_atom(self, atom, fragments=True):
+	def _classify_atom(self, atom, fragments=True, pockets_only=False):
 		clash_radius = self._protein_clash_function(atom)
-		return self._classify_position(atom.position, fragments, clash_radius=clash_radius)
+		return self._classify_position(atom.position, fragments, clash_radius=clash_radius, pockets_only=pockets_only)
 
-	def _classify_position(self, position, fragments=True, clash_radius=0.0):
+	def _classify_position(self, position, fragments=True, clash_radius=0.0, pockets_only=False):
 		
 		from .o3d import is_point_in_mesh
+		from numpy.linalg import norm
+
+		if pockets_only:
+			fragments = False
 
 		if fragments and is_point_in_mesh(self.fragment_mesh, position):
 			return ('GOOD','fragment space')
 
 		# protein clash
-		if is_point_in_mesh(self.protein_mesh, position, within=clash_radius):
+		if not pockets_only and is_point_in_mesh(self.protein_mesh, position, within=clash_radius):
 			return ('BAD','protein clash')
 
 		# pockets
 		for p_name, p_mesh in self.pockets.items():
-			if is_point_in_mesh(p_mesh, position):
+
+			if norm(position - p_mesh['center']) > p_mesh['radius']:
+				continue
+
+			if d := is_point_in_mesh(p_mesh, position):
+				if d is None:
+					logger.error(f'Could not classify {position=} because of {p_name=}')
 				return ('GOOD', 'pocket', p_name)
 
-		return ('BAD','solvent space')
+		if pockets_only:
+			return None
+		else:
+			return ('BAD','solvent space')
 
 	def _classify_vector(self, origin, direction, fragments=False, warnings=True):
-
-		# logger.debug(f"butcher._classify_vector({origin=}, {direction=})")
 
 		d = 0.0
 
@@ -1324,7 +1454,6 @@ class PoseButcher:
 		direction /= norm(direction)
 
 		origin_info = self._classify_position(origin, fragments=fragments)
-		# logger.info(f'origin: {origin_info}')
 
 		result = dict(origin=origin_info, direction=direction)
 
@@ -1487,6 +1616,9 @@ class PoseButcher:
 		pairs = []
 		for k,v in output.items():
 
+			if not v:
+				continue
+
 			if v[1] == 'pocket':
 				c = self.pockets[v[2]]['material'].base_color
 				c = tuple([float(x) for x in c[:3]])
@@ -1566,6 +1698,9 @@ class PoseButcher:
 def output_to_label(output, index):
 
 	output_tuple = output[index]
+
+	if not output_tuple:
+		return ''
 
 	if output_tuple[1] == 'pocket':
 		return f'{output_tuple[2]}'
@@ -1649,7 +1784,12 @@ SOLVENT_COLOR = (0.12156862745098039, 0.4666666666666667, 0.7058823529411765)  #
 FRAGMENT_COLOR = (1.0, 0.4980392156862745, 0.054901960784313725) 			   # 'tab:orange'
 BASE_COLOR = (0.4980392156862745, 0.4980392156862745, 0.4980392156862745)   # 'tab:gray'
 
-POCKET_COLORS = [
+class CyclicList(list):
+    def __getitem__(self, index):
+        index = index % len(self) if isinstance(index, int) else index
+        return super().__getitem__(index)
+
+POCKET_COLORS = CyclicList([
 	(0.17254901960784313, 0.6274509803921569, 0.17254901960784313), # 'tab:green'
 	(0.5803921568627451, 0.403921568627451, 0.7411764705882353),    # 'tab:purple'
 	(0.5490196078431373, 0.33725490196078434, 0.29411764705882354), # 'tab:brown'
@@ -1660,7 +1800,7 @@ POCKET_COLORS = [
 	(0.4980392156862745, 0.4980392156862745, 0.4980392156862745),   # 'tab:gray'
 	(1.0, 0.4980392156862745, 0.054901960784313725), 				# 'tab:orange'
 	(0.8392156862745098, 0.15294117647058825, 0.1568627450980392),  # 'tab:red'
-]
+])
 
 CC_DIST = 1.54
 C_VDW_RADIUS = 1.7
