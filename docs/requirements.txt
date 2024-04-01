@@ -1,12 +1,1 @@
 # Defining the exact version will make sure things don't break
-MPyTools >= 0.0.9
-MolParse >= 0.0.9
-ase
-rdkit
-py3Dmol
-IPython
-open3d == 0.18.0
-numpy
-jupyterlab
-pandas
-pygamer
