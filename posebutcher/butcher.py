@@ -174,12 +174,12 @@ class PoseButcher:
 
 		self._pocket_definitions = None
 
-		self.fragment_atomgroup = d['_fragment_atomgroup']
-		self.fragment_mesh = d['_fragment_mesh']
-		self.protein = d['_protein']
-		self.protein_hull = d['_protein_hull']
-		self.protein_mesh = d['_protein_mesh']
-		self._apo_protein_path = d['_protein']
+		self.fragment_atomgroup = path / d['_fragment_atomgroup']
+		self.fragment_mesh = path / d['_fragment_mesh']
+		self.protein = path / d['_protein']
+		self.protein_hull = path / d['_protein_hull']
+		self.protein_mesh = path / d['_protein_mesh']
+		self._apo_protein_path = path / d['_protein']
 
 		self.protein_mesh['material'] = material_from_dict(self.protein_mesh['material'])
 		self.protein_hull['material'] = material_from_dict(self.protein_hull['material'])
@@ -824,15 +824,14 @@ class PoseButcher:
 		path = str(subdir / f'protein.pdb')
 		logger.writing(path)
 		mp.write(path, d['_protein'], shift_name=True, verbosity=False)
-		d['_protein'] = path
-		d['_pocket_definitions'] = path
+		d['_protein'] = path.name
 
 		# fragment atomgroup
 		if d['_fragment_atomgroup']:
 			path = str(subdir / f'_fragment_atomgroup.pdb')
 			logger.writing(path)
 			mp.write(path, d['_fragment_atomgroup'], verbosity=False)
-			d['_fragment_atomgroup'] = path
+			d['_fragment_atomgroup'] = path.name
 
 		# pockets
 		d['_pocket_definitions'] = self._pocket_definitions
@@ -843,7 +842,7 @@ class PoseButcher:
 			mesh = value['geometry'].to_legacy()
 			path = str(subdir / f'pocket_{pocket}.ply')
 			dump_mesh(path, mesh)
-			value['geometry'] = path
+			value['geometry'] = path.name
 			value['material'] = material_to_dict(value['material'])
 
 		# _fragment_mesh
@@ -851,7 +850,7 @@ class PoseButcher:
 			path = str(subdir / f'_fragment_mesh.ply')
 			mesh = d['_fragment_mesh']['geometry'].to_legacy()
 			dump_mesh(path, mesh)
-			d['_fragment_mesh']['geometry'] = path
+			d['_fragment_mesh']['geometry'] = path.name
 			d['_fragment_mesh']['material'] = material_to_dict(d['_fragment_mesh']['material'])
 
 		# _protein_hull
@@ -859,7 +858,7 @@ class PoseButcher:
 			path = str(subdir / f'_protein_hull.ply')
 			mesh = d['_protein_hull']['geometry']
 			dump_mesh(path, mesh)
-			d['_protein_hull']['geometry'] = path
+			d['_protein_hull']['geometry'] = path.name
 			d['_protein_hull']['material'] = material_to_dict(d['_protein_hull']['material'])
 
 		# _protein_mesh
@@ -867,7 +866,7 @@ class PoseButcher:
 			path = str(subdir / f'_protein_mesh.ply')
 			mesh = d['_protein_mesh']['geometry']
 			dump_mesh(path, mesh)
-			d['_protein_mesh']['geometry'] = path
+			d['_protein_mesh']['geometry'] = path.name
 			d['_protein_mesh']['material'] = material_to_dict(d['_protein_mesh']['material'])
 
 		logger.writing(subdir / f'{subdir.name}.json')
