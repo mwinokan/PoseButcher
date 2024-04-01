@@ -20,13 +20,16 @@ github_repository = 'PoseButcher'
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
-              'sphinx.ext.autodoc',
+              # 'sphinx.ext.autodoc',
+              'autoapi.extension',
               'sphinx.ext.doctest',
               'sphinx.ext.extlinks',
               'sphinx.ext.mathjax',
               'sphinx.ext.viewcode',
               'sphinx.ext.napoleon',
               'sphinx.ext.intersphinx']
+
+autoapi_dirs = ['../../posebutcher/']
 
 templates_path = ['_templates']
 exclude_patterns = []

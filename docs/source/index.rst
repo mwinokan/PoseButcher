@@ -10,6 +10,3 @@ PoseButcher Documentation
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
-
-   API Reference <api_reference>
-   
