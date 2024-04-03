@@ -3,6 +3,12 @@
 
 ![logo](assets/posebutcher_logo-01.png)
 
+![GitHub Tag](https://img.shields.io/github/v/tag/mwinokan/posebutcher?include_prereleases&label=PyPI&link=https%3A%2F%2Fpypi.org%2Fproject%2Fposebutcher%2F)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/mwinokan/posebutcher/python-publish.yml)
+[![Documentation Status](https://readthedocs.org/projects/posebutcher/badge/?version=latest)](https://posebutcher.winokan.com/en/latest/?badge=latest)
+![GitHub last commit](https://img.shields.io/github/last-commit/mwinokan/posebutcher)
+![GitHub Issues or Pull Requests](https://img.shields.io/github/issues/mwinokan/posebutcher)
+
 > "A good butcher always trims the fat"
 
 PoseButcher is a tool for categorising and segmenting virtual hits with reference to experimental protein structures and (fragment) hits.
