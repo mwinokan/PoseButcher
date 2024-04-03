@@ -174,12 +174,24 @@ class PoseButcher:
 
 		self._pocket_definitions = None
 
-		self.fragment_atomgroup = path / d['_fragment_atomgroup']
-		self.fragment_mesh = path / d['_fragment_mesh']
+		self.fragment_atomgroup = d['_fragment_atomgroup']
+		if self.fragment_atomgroup:
+			self.fragment_atomgroup = path / self.fragment_atomgroup
+
+		self.fragment_mesh = d['_fragment_mesh']
+		if self.fragment_mesh:
+			self.fragment_mesh = path / self.fragment_mesh
+
 		self.protein = path / d['_protein']
-		self.protein_hull = path / d['_protein_hull']
-		self.protein_mesh = path / d['_protein_mesh']
-		self._apo_protein_path = path / d['_protein']
+		d['_protein_hull']['geometry'] = path / d['_protein_hull']['geometry']
+		self.protein_hull = d['_protein_hull']
+
+		d['_protein_mesh']['geometry'] = path / d['_protein_mesh']['geometry']
+		self.protein_mesh = d['_protein_mesh']
+
+		self._apo_protein_path = d['_protein']
+		if self._apo_protein_path:
+			self._apo_protein_path = path / self._apo_protein_path
 
 		self.protein_mesh['material'] = material_from_dict(self.protein_mesh['material'])
 		self.protein_hull['material'] = material_from_dict(self.protein_hull['material'])
@@ -191,7 +203,7 @@ class PoseButcher:
 		self._pocket_clip_hull = d['_pocket_clip_hull']
 		self._pockets = { k:{
 			'name':k,
-			'geometry':load_mesh(v['geometry']),
+			'geometry':load_mesh(path / v['geometry']),
 			'material':material_from_dict(v['material']),
 			'radius':v['radius'],
 			'center':array(v['center']),
@@ -821,7 +833,7 @@ class PoseButcher:
 		from .o3d import dump_mesh, material_to_dict
 
 		# protein
-		path = str(subdir / f'protein.pdb')
+		path = subdir / f'protein.pdb'
 		logger.writing(path)
 		mp.write(path, d['_protein'], shift_name=True, verbosity=False)
 		d['_protein'] = path.name
@@ -840,14 +852,14 @@ class PoseButcher:
 		d['_pocket_clip_hull'] = self._pocket_clip_hull
 		for pocket, value in d['_pockets'].items():
 			mesh = value['geometry'].to_legacy()
-			path = str(subdir / f'pocket_{pocket}.ply')
+			path = subdir / f'pocket_{pocket}.ply'
 			dump_mesh(path, mesh)
 			value['geometry'] = path.name
 			value['material'] = material_to_dict(value['material'])
 
 		# _fragment_mesh
 		if d['_fragment_mesh']:
-			path = str(subdir / f'_fragment_mesh.ply')
+			path = subdir / f'_fragment_mesh.ply'
 			mesh = d['_fragment_mesh']['geometry'].to_legacy()
 			dump_mesh(path, mesh)
 			d['_fragment_mesh']['geometry'] = path.name
@@ -855,7 +867,7 @@ class PoseButcher:
 
 		# _protein_hull
 		if d['_protein_hull']:
-			path = str(subdir / f'_protein_hull.ply')
+			path = subdir / f'_protein_hull.ply'
 			mesh = d['_protein_hull']['geometry']
 			dump_mesh(path, mesh)
 			d['_protein_hull']['geometry'] = path.name
@@ -863,7 +875,7 @@ class PoseButcher:
 
 		# _protein_mesh
 		if d['_protein_mesh']:
-			path = str(subdir / f'_protein_mesh.ply')
+			path = subdir / f'_protein_mesh.ply'
 			mesh = d['_protein_mesh']['geometry']
 			dump_mesh(path, mesh)
 			d['_protein_mesh']['geometry'] = path.name
@@ -910,7 +922,7 @@ class PoseButcher:
 
 	@property
 	def fragment_mesh(self):
-		if self._fragment_mesh is None:
+		if self._fragment_mesh is None and self.fragment_atomgroup:
 
 			# create fragment bolus PDB
 			
