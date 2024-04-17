@@ -979,13 +979,15 @@ class PoseButcher:
 			logger.info('Generating protein mesh...')
 
 			from .o3d import mesh_from_pdb, material
-			
+
 			try:
+				logger.info('mesh_from_pdb()')
 				mesh = mesh_from_pdb(self._apo_protein_path).to_legacy()
 			except ModuleNotFoundError as e:
 				logger.error('Could not generate protein mesh (no PyGAMer)')
 				return self._protein_mesh
 
+			logger.info('mesh.compute_vertex_normals()')
 			mesh.compute_vertex_normals()
 
 			self._protein_mesh = dict(
@@ -1001,11 +1003,11 @@ class PoseButcher:
 		if a is None:
 			self._protein_mesh = None
 		elif isinstance(a, dict):
-			if isinstance(a['geometry'], str):
+			if isinstance(a['geometry'], str) or isinstance(a['geometry'], Path):
 				from .o3d import load_mesh
 				a['geometry'] = load_mesh(a['geometry'])
 			self._protein_mesh = a
-		elif isinstance(a, str) and a.endswith('.ply'):
+		elif isinstance(a, str) or isinstance(a, Path):
 			from .o3d import load_mesh
 			self._protein_mesh = {}
 			self._protein_mesh['geometry'] = load_mesh(a)
@@ -1048,7 +1050,7 @@ class PoseButcher:
 		if a is None:
 			self._protein_hull = None
 		elif isinstance(a, dict):
-			if isinstance(a['geometry'], str):
+			if isinstance(a['geometry'], str) or isinstance(a['geometry'], Path):
 				from .o3d import load_mesh
 				a['geometry'] = load_mesh(a['geometry'])
 			self._protein_hull = a
@@ -1108,9 +1110,17 @@ class PoseButcher:
 		if isinstance(protein,str) or isinstance(protein, Path):
 			logger.reading(protein)
 			self._protein = mp.parse(protein, verbosity=0).protein_system
+			self._protein_mesh = None
+			self._protein_hull = None
 			self._apo_protein_path = f'_butcher_protein.pdb'
 			logger.writing(self._apo_protein_path)
-			mp.writePDB(self._apo_protein_path, self._protein, shift_name=True, verbosity=0)
+			mp.writePDB(
+				self._apo_protein_path, 
+				self._protein, 
+				shift_name=True, 
+				verbosity=0,
+				hydrogen=False,
+			)
 
 		else:
 			raise NotImplementedError
@@ -1796,9 +1806,9 @@ FRAGMENT_COLOR = (1.0, 0.4980392156862745, 0.054901960784313725) 			   # 'tab:or
 BASE_COLOR = (0.4980392156862745, 0.4980392156862745, 0.4980392156862745)   # 'tab:gray'
 
 class CyclicList(list):
-    def __getitem__(self, index):
-        index = index % len(self) if isinstance(index, int) else index
-        return super().__getitem__(index)
+	def __getitem__(self, index):
+		index = index % len(self) if isinstance(index, int) else index
+		return super().__getitem__(index)
 
 POCKET_COLORS = CyclicList([
 	(0.17254901960784313, 0.6274509803921569, 0.17254901960784313), # 'tab:green'
