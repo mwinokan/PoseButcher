@@ -32,3 +32,5 @@ See the example notebook_ on github.
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
+
+   vector

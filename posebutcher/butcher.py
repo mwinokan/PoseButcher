@@ -224,6 +224,7 @@ class PoseButcher:
 		fragments: bool = False,
 		count: bool = False,
 		pockets_only: bool = False,
+		indices: bool = False,
 	) -> dict [str, tuple]:
 
 		'''
@@ -297,7 +298,7 @@ class PoseButcher:
 
 			# add labels to the atoms
 			for atom in mol.GetAtoms():
-				atom.SetProp('atomNote',output_to_label(output, atom.GetIdx()))
+				atom.SetProp('atomNote', output_to_label(output, atom.GetIdx(), indices=indices))
 
 			# create the drawing
 			drawing = mp.rdkit.draw_highlighted_mol(
@@ -1499,7 +1500,8 @@ class PoseButcher:
 			
 			from numpy import inf
 			if hit_distance == inf:
-				logger.error('NO HIT')
+				logger.error('No hit. Vector likely starts in solvent and heads outwards')
+				complete = True
 
 			else:
 
@@ -1522,19 +1524,31 @@ class PoseButcher:
 						skip_pockets.append(pocket_name)
 						result['intersections'][hit_distance] = ('GOOD', 'pocket', pocket_name)
 
-		result['first_intersection_distance'] = min(result['intersections'])
-		result['new_pocket'] = 'pocket' in result['intersections'][result['first_intersection_distance']]
-		result['last_intersection_distance'] = max(result['intersections'])
-		result['destination'] = result['intersections'][result['last_intersection_distance']][1]
-		result['max_atoms_added'] = self._num_heavy_atoms_from_distance(result['last_intersection_distance'])
+		if result['intersections']:
+			result['first_intersection_distance'] = min(result['intersections'])
+			result['new_pocket'] = 'pocket' in result['intersections'][result['first_intersection_distance']]
+			result['last_intersection_distance'] = max(result['intersections'])
+			result['destination'] = result['intersections'][result['last_intersection_distance']][1]
+			result['max_atoms_added'] = self._num_heavy_atoms_from_distance(result['last_intersection_distance'])
+		
+		else:
+			from numpy import inf
+			result['first_intersection_distance'] = None
+			result['new_pocket'] = False
+			result['last_intersection_distance'] = None
+			result['destination'] = 'solvent space'
+			result['max_atoms_added'] = inf
 
-		if result['last_intersection_distance'] < CC_DIST:
+		if (x := result['last_intersection_distance']) and x < CC_DIST:
 			if warnings:
 				logger.warning('Vector ends within carbon-carbon bond distance')
 			result['success'] = False
 			return result
 
-		result['success'] = True
+		if result['intersections']:
+			result['success'] = True
+		else:
+			result['success'] = False
 
 		return result
 
@@ -1716,23 +1730,29 @@ class PoseButcher:
 
 		return summary
 
-def output_to_label(output, index):
+def output_to_label(output, index, indices: bool = False):
 
 	output_tuple = output[index]
 
 	if not output_tuple:
 		return ''
 
-	if output_tuple[1] == 'pocket':
-		return f'{output_tuple[2]}'
+	elif output_tuple[1] == 'pocket':
+		s = f'{output_tuple[2]}'
 	
-	if output_tuple[1] == 'solvent space':
-		return 'SOL.'
+	elif output_tuple[1] == 'solvent space':
+		s = 'SOL.'
 	
-	if output_tuple[1] == 'protein clash':
-		return 'PROT.'
+	elif output_tuple[1] == 'protein clash':
+		s = 'PROT.'
 
-	return ''
+	else:
+		return ''
+
+	if indices:
+		return f'{index}: {s}'
+	else:
+		return s
 
 def circular_samples(theta_max, theta_step):
 	import numpy as np
@@ -1786,7 +1806,10 @@ def create_arrow_mesh(orig_atom, orig_index, origin, color_by_distance, result):
 
 		# color by clash/destination
 
-		if result['intersections'][first_intersection][1] == 'pocket':
+		if first_intersection is None:
+			color = [0,0,0]
+
+		elif result['intersections'][first_intersection][1] == 'pocket':
 			color = [0,1,0]
 
 		elif result['intersections'][dist_to_clash][1] == 'solvent space':
