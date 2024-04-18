@@ -320,14 +320,16 @@ def mesh_fix(
 
 	return fixed
 
-def dump_mesh(path, mesh):
+def dump_mesh(path, mesh, verbosity=True, **kwargs):
 	if hasattr(mesh, 'to_legacy'):
 		mesh = mesh.to_legacy()
-	logger.writing(path)
-	o3d.io.write_triangle_mesh(str(path), mesh)
+	if verbosity:
+		logger.writing(path)
+	o3d.io.write_triangle_mesh(str(path), mesh, **kwargs)
 
-def load_mesh(path):
-	logger.reading(path)
+def load_mesh(path, verbosity=True):
+	if verbosity:
+		logger.reading(path)
 	return o3d.io.read_triangle_mesh(str(path))
 
 def material_to_dict(material):

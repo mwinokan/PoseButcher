@@ -1219,13 +1219,14 @@ class PoseButcher:
 		from numpy import float32
 		from open3d.t.geometry import TriangleMesh
 		from open3d import core
+		from .vtk import boolean_difference
 
 		from open3d import utility
 		utility.set_verbosity_level(utility.VerbosityLevel.Error)
 
 		logger.info('Clipping pockets...')
 
-		# clip the pockets to the protein
+		# clip the pockets by their bisector planes
 		if pockets:
 			logger.debug('pocket-pocket intersection...')
 
@@ -1238,15 +1239,10 @@ class PoseButcher:
 					if not hasattr(pocket2['geometry'], 'get_center'):
 						pocket2['geometry'] = pocket2['geometry'].to_legacy()
 
-					# print(len(pocket1['geometry']))
-					# print(pocket1['geometry'])
-
 					if hasattr(pocket1['geometry'],'to_legacy'):
-						# print(pocket1['geometry'].to_legacy().has_vertices())
 						if not pocket1['geometry'].to_legacy().has_vertices():
 							continue
 					else:
-						# print(pocket1['geometry'].has_vertices())
 						if not pocket1['geometry'].has_vertices():
 							continue
 
@@ -1264,9 +1260,6 @@ class PoseButcher:
 						center1 = center1.numpy()
 					if hasattr(center2, 'numpy'):
 						center2 = center2.numpy()
-
-					# print(center1, type(center1))
-					# print(center2, type(center2))
 
 					center1 = float32(center1)
 					center2 = float32(center2)
@@ -1312,35 +1305,36 @@ class PoseButcher:
 						logger.debug(f'{pocket2["radius"]=}')
 						logger.debug(f'{diff_vect_12=}')
 						logger.debug(f'{norm(diff_vect_12)=}')
-						logger.error('Try setting slightly larger pocke radii?')
+						logger.error('Try setting slightly larger pocket radius?')
+					else:
+						pocket1['geometry'] = pocket1['geometry'].compute_convex_hull()
 
 					if not pocket2['geometry'].to_legacy().has_vertices():
 						logger.error(f'pocket2={pocket2["name"]} has no vertices after clipping with pocket1={pocket1["name"]}')
+					else:
+						pocket2['geometry'] = pocket2['geometry'].compute_convex_hull()
 			
-			logger.debug('pocket convex hull...')
+			logger.debug('removing pockets with no vertices...')
 			for i,pocket in reversed(list(enumerate(self.pocket_meshes))):
 
 				if hasattr(pocket['geometry'],'to_legacy'):
-					# print(pocket['geometry'].to_legacy().has_vertices())
 					if not pocket['geometry'].to_legacy().has_vertices():
 						logger.error(f'Pocket has no vertices (deleting): {pocket["name"]=}')
 						del self.pocket_meshes[i]
 						continue
 				else:
-					# print(pocket['geometry'].has_vertices())
 					if not pocket['geometry'].has_vertices():
 						logger.error(f'Pocket has no vertices (deleting): {pocket["name"]=}')
 						del self.pocket_meshes[i]
 						continue
 
-				# print(pocket['geometry'])
 				pocket['geometry'] = pocket['geometry'].compute_convex_hull()
 
 				# convert to Float32 etc:
 				pocket['geometry'] = pocket['geometry'].to_legacy()
 				pocket['geometry'] = TriangleMesh.from_legacy(pocket['geometry'], vertex_dtype=core.Dtype.Float32)
 
-		# clip the pockets by their bisector planes
+		# clip the pockets to the protein
 		if protein:
 			logger.debug('clipping pockets (protein)')
 
@@ -1353,7 +1347,22 @@ class PoseButcher:
 				protein = TriangleMesh.from_legacy(protein_mesh['geometry'])
 
 				for pocket in self.pocket_meshes:
-					pocket['geometry'] = pocket['geometry'].boolean_difference(protein)
+					
+					logger.debug(f'clipping pocket={pocket["name"]} to protein')
+
+					# m1 = pocket['geometry']
+					# pocket['geometry'] = boolean_difference(pocket['geometry'], protein)
+
+					m1 = dict(name=f'original {pocket["name"]}', geometry=pocket['geometry'])
+					m2 = dict(name=f'clipped {pocket["name"]}', geometry=boolean_difference(pocket['geometry'], protein))
+
+					if not m2['geometry'].has_vertices():
+						logger.warning(f'Could not clip {m2["name"]} with protein. N.B. pocket volume will intersect with the protein')
+						# from .o3d import render
+						# render([m1, m2, protein])
+						pocket['geometry'] = m1['geometry']
+					else:
+						pocket['geometry'] = m2['geometry']
 
 		# clip the pockets to the convex hull of the protein
 		if hull:
