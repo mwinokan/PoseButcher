@@ -144,7 +144,19 @@ In both cases, the result is a dictionary with atom index keys:
       19: ('BAD', 'solvent space')
    }
 
-The :meth:`PoseButcher.tag` method will return a set of the atom classifications.
+If your ligand is an elaboration or expansion of a known base (parent) compound you can consider only the novel material using the `base` argument to `chop`.
+
+If you want to use pockets to tag a compound but don't care which atoms use the :meth:`PoseButcher.tag` method which will return a set of the atom classifications:
+
+::
+ 
+   >>> butcher.tag(mol)
+   {'P1', 'P2', 'solvent space'}
+
+::
+
+   >>> butcher.tag(mol, pockets_only=True)
+   {'P1', 'P2'}
 
 File I/O of a :class:`.PoseButcher` object
 ------------------------------------------
