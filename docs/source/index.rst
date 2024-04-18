@@ -7,6 +7,10 @@
 PoseButcher Documentation
 =========================
 
+.. image:: ../../assets/posebutcher_logo-01.png
+  :width: 400
+  :alt: Logo
+
 Installation
 ============
 
