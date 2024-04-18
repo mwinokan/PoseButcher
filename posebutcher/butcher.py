@@ -1362,7 +1362,7 @@ class PoseButcher:
 						# render([m1, m2, protein])
 						pocket['geometry'] = m1['geometry']
 					else:
-						pocket['geometry'] = m2['geometry']
+						pocket['geometry'] = TriangleMesh.from_legacy(m2['geometry'])
 
 		# clip the pockets to the convex hull of the protein
 		if hull:
