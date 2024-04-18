@@ -1,7 +1,7 @@
 
-===============================================
-Classifying expansion vectors around a compound
-===============================================
+===========================
+Exploring expansion vectors
+===========================
 
 
 Getting some test data

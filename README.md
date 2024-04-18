@@ -13,6 +13,8 @@
 
 PoseButcher is a tool for categorising and segmenting virtual hits with reference to experimental protein structures and (fragment) hits.
 
+[DOCUMENTATION](https://posebutcher.winokan.com)
+
 Ligand atoms are tagged with categories:
 
 	- GOOD:
@@ -65,41 +67,3 @@ Ligand atoms are tagged with categories:
 ### Exploring expansion vector into a desirable pocket
 
 ![butcher_vector](https://github.com/mwinokan/PoseButcher/assets/36866506/af34e286-3dfe-4f5a-871e-ff8d28292a3d)
-
-## Installation
-
-1. Install PoseButcher:
-
-`pip install --upgrade posebutcher`
-
-*N.B. open3d version 0.18 or greater is required*
-
-### Common installation issues
-
-**PyGAMer build fails on Linux HPC**
-
-PoseButcher uses PyGAMer to calculate the surface meshes from PDB files (used for the protein and fragment bolus). The current workaround is to install PoseButcher without PyGAMer and then import an existing PoseButcher using `PoseButcher.from_directory` or PoseButcher.protein_mesh = '/path/to/protein_mesh.ply'.
-
-```
-pip install --upgrade MolParse open3d jupyterlab pandas
-pip install --upgrade --no-dependencies posebutcher
-```
-
-If initialised without the `from_directory` method, add a protein mesh to an existing PoseButcher using:
-
-```
-butcher.protein_mesh = '/path/to/protein_mesh.ply'
-butcher._clip_pockets()
-```
-
-## Examples
-
-PoseButcher ships with some open access test data from the XChem group at Diamond Light Source, funded by the ASAP consortium.
-
-To run the "example.ipynb":
-
-```
-git clone git@github.com:mwinokan/PoseButcher
-cd PoseButcher
-jupyter lab
-```
